@@ -550,6 +550,10 @@ function renderResults() {
   const labeled = r.zones.filter((z) => z.polygons);
   if (state.boundaries.length && !labeled.length) {
     html += '<div class="help">工区名が未設定です。「工区名を付ける」で範囲をクリックしてください（下は範囲全体の数量）</div>';
+  } else if (labeled.length) {
+    const named = new Set(state.seeds.map((s) => regionOf(s.x, s.y)).filter((i) => i >= 0));
+    const unnamed = state.regions.length - named.size;
+    if (unnamed > 0) html += `<div class="help">⚠ 工区名が付いていない範囲が ${unnamed} か所あります。その範囲は数量に含まれていません</div>`;
   }
   if (r.zones.length > 1) {
     const sum = r.zones.reduce((a, z) => a + z.total, 0);
@@ -665,6 +669,67 @@ function renderUnitSummary() {
   $('unitSummary').innerHTML = html;
 }
 
+// ---------- 工区割の保存・読込 ----------
+const PLAN_FORMAT = 'ifc-concrete-qto/plan';
+const RANGE_IDS = ['storey', 'upBase', 'upOff', 'lowBase', 'lowOff'];
+
+function savePlan() {
+  if (!state.meta) return;
+  const plan = {
+    format: PLAN_FORMAT, version: 1, saved_at: new Date().toISOString(), source: state.meta.source,
+    range: Object.fromEntries(RANGE_IDS.map((id) => [id, $(id).value])),
+    boundaries: state.boundaries, seeds: state.seeds,
+    categories: [...state.categories], selected: [...state.selected], selectedOnly: state.selectedOnly,
+    units: state.units,
+  };
+  const d = new Date(), p = (n) => String(n).padStart(2, '0');
+  const stamp = `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}`;
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([JSON.stringify(plan, null, 1)], { type: 'application/json' }));
+  a.download = `${state.meta.source.replace(/\.ifc$/i, '')}_工区割_${stamp}.json`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+  toast(`工区割を保存しました：${a.download}`);
+}
+
+function applyPlan(plan) {
+  if (plan.format !== PLAN_FORMAT) throw new Error('このアプリで保存した工区割ファイルではありません');
+  const storeys = new Set(state.meta.storeys.map((s) => s.name));
+  const missing = ['storey', 'upBase', 'lowBase'].map((id) => plan.range[id]).filter((n) => !storeys.has(n));
+  if (missing.length) throw new Error(`開いているIFCに無い階があります（${[...new Set(missing)].join('、')}）`);
+  const tags = new Set(state.meta.grids.map((a) => a.tag));
+  const lost = plan.boundaries.filter((b) => !tags.has(b.axis)).map((b) => b.axis);
+  if (lost.length) throw new Error(`開いているIFCに無い通り芯があります（${[...new Set(lost)].join('、')}）`);
+
+  cancelPending();
+  for (const id of RANGE_IDS) $(id).value = plan.range[id];
+  state.boundaries = plan.boundaries;
+  state.seeds = plan.seeds;
+  state.categories = new Set(plan.categories.filter((c) => state.meta.categories.includes(c)));
+  for (const cb of document.querySelectorAll('#categories input')) cb.checked = state.categories.has(cb.dataset.cat);
+  state.selected = new Set(plan.selected.filter((id) => id in state.meta.members));
+  state.selectedOnly = plan.selectedOnly;
+  $('selectedOnly').checked = plan.selectedOnly;
+  state.units = plan.units;
+  state.unitResult = null;
+  $('selInfo').textContent = state.selected.size ? `${state.selected.size} 部材を選択中` : '';
+  renderBoundaryList();
+  renderUnits();
+  applyRange(); // 再描画と再計算
+  runUnits();
+}
+
+async function openPlan(file) {
+  try {
+    const plan = JSON.parse(await file.text());
+    applyPlan(plan);
+    const note = plan.source && plan.source !== state.meta.source ? `（保存時のIFCは ${plan.source}。通り芯と階の名前で合わせました）` : '';
+    toast(`工区割を開きました：${file.name}${note}`);
+  } catch (e) {
+    toast(`工区割を開けませんでした：${e instanceof SyntaxError ? 'ファイルの形式が正しくありません' : e.message}`);
+  }
+}
+
 // ---------- 初期化 ----------
 function renderSidebar() {
   const m = state.meta;
@@ -750,6 +815,11 @@ $('unitList').addEventListener('input', (ev) => {
 });
 $('clearSel').addEventListener('click', () => { state.selected.clear(); onSelectionChanged(); });
 $('selectedOnly').addEventListener('change', (ev) => { state.selectedOnly = ev.target.checked; paint(); scheduleCompute(); });
+$('savePlan').addEventListener('click', savePlan);
+$('planInput').addEventListener('change', (ev) => {
+  if (ev.target.files[0]) openPlan(ev.target.files[0]);
+  ev.target.value = ''; // 同じファイルをもう一度選べるように
+});
 $('fileInput').addEventListener('change', async (ev) => {
   const file = ev.target.files[0];
   if (!file) return;

@@ -55,6 +55,8 @@ input[type=number] { width: 80px; padding: 4px; border: 1px solid var(--line); b
 .filebtn { display: inline-block; margin-top: 6px; padding: 5px 10px; border: 1px solid var(--line);
   border-radius: 6px; cursor: pointer; font-size: 12px; }
 .filebtn input { display: none; }
+.filebtns { display: flex; gap: 6px; flex-wrap: wrap; }
+button.filebtn { background: #fff; font-size: 12px; }
 table.mini { border-collapse: collapse; width: 100%; font-size: 12px; margin-top: 6px; }
 table.mini td { padding: 2px 4px; border-bottom: 1px solid #eef0f3; }
 table.mini td.num { text-align: right; font-variant-numeric: tabular-nums; }

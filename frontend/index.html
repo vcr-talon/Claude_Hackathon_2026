@@ -14,7 +14,11 @@
     <header>
       <h1>コンクリート数量算出</h1>
       <div id="modelInfo" class="muted">読込中…</div>
-      <label class="filebtn">IFCを開く<input type="file" id="fileInput" accept=".ifc"></label>
+      <div class="filebtns">
+        <label class="filebtn">IFCを開く<input type="file" id="fileInput" accept=".ifc"></label>
+        <button id="savePlan" class="filebtn">工区割を保存</button>
+        <label class="filebtn">工区割を開く<input type="file" id="planInput" accept=".json"></label>
+      </div>
     </header>
 
     <section>
