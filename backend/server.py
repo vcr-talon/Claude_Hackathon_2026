@@ -25,6 +25,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from qto.geometry import CATEGORY_ORDER, Result, compute  # noqa: E402
 from qto.ifc_loader import Model, load_model  # noqa: E402
 from qto.partition import ZoneSeed, assign_zones, split_regions  # noqa: E402
+from qto.units import PourUnit, compute_units, region_from_rings  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 FRONTEND = ROOT / "frontend"
@@ -159,6 +160,44 @@ def api_compute(req: ComputeRequest):
         "z1": max(req.z0, req.z1),
         "zones": results,
         "regions": [_rings(r) for r in regions] if regions is not None else [],
+    }
+
+
+class UnitRequest(BaseModel):
+    name: str
+    z0: float
+    z1: float
+    polygons: list[list[list[tuple[float, float]]]] | None = None
+    categories: list[str] | None = None
+    member_ids: list[str] | None = None
+
+
+class UnitsRequest(BaseModel):
+    units: list[UnitRequest]
+
+
+def _members_json(r: Result) -> list[dict]:
+    return [{"member_id": m.member_id, "name": m.member_name, "category": m.category, "volume": m.volume}
+            for m in r.members]
+
+
+@app.post("/api/units")
+def api_units(req: UnitsRequest):
+    model = get_model()
+    units = [PourUnit(u.name, min(u.z0, u.z1), max(u.z0, u.z1), region_from_rings(u.polygons),
+                      set(u.categories) if u.categories is not None else None,
+                      set(u.member_ids) if u.member_ids is not None else None) for u in req.units]
+    res = compute_units(model.solids, units)
+    return {
+        "units": [{"name": u.name, "total": r.total, "by_category": r.by_category,
+                   "member_count": len(r.members), "uncomputed_count": len(r.uncomputed)}
+                  for u, r in zip(units, res.results)],
+        "sum_total": res.sum_total,
+        "union_total": res.union_total,
+        "overlaps": [{"a": o.a, "b": o.b, "volume": o.volume,
+                      "shared_volume": o.shared.total if o.shared else 0.0,
+                      "members": _members_json(o.shared) if o.shared else []}
+                     for o in res.overlaps],
     }
 
 

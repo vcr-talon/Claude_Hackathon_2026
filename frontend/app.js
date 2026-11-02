@@ -31,6 +31,8 @@ const state = {
   view: 'plan',
   pending: null, // {axis, editIndex}
   result: null,
+  units: [], // 打設区分 {name, z0, z1, rangeText, label, polygons, categories, member_ids}
+  unitResult: null,
 };
 
 // ---------- Three.js の準備 ----------
@@ -530,7 +532,8 @@ async function runCompute() {
     $('resultBody').innerHTML = `<div class="warn">計算できません：${esc((await res.json()).detail)}</div>`;
     return;
   }
-  state.result = await res.json();
+  // 登録時に「計算した時点の条件」をそのまま使えるよう、条件も一緒に持っておく
+  state.result = { ...(await res.json()), request: body, rangeText: $('rangeText').textContent };
   state.regions = state.result.regions;
   drawZones();
   renderResults();
@@ -576,10 +579,90 @@ function renderResults() {
     html += `<details><summary>対象部材の一覧</summary><table class="mini">` +
       z.members.slice(0, 300).map((m) => `<tr><td>${esc(m.category)}</td><td>${esc(m.name)}</td><td class="num">${fmt(m.volume, 3)}</td></tr>`).join('') +
       '</table><div class="muted">部材ごとの値は範囲内に切り取った体積（重複控除前）</div></details>';
+    if (z.total > 0) html += `<button class="reg" data-reg="${r.zones.indexOf(z)}">＋ 打設区分に登録</button>`;
     html += '</div>';
   }
   html += '<div class="muted">内訳は「柱→梁→壁→スラブ→基礎→階段→その他」の順で重なりを配分した参考値です。総数量は重複を除いた体積です。</div>';
   $('resultBody').innerHTML = html;
+}
+
+// ---------- 打設区分 ----------
+function registerUnit(zi) {
+  const r = state.result, z = r.zones[zi], req = r.request;
+  const allCats = req.categories.length === state.meta.categories.length;
+  let name = r.rangeText.split('（')[0];
+  if (z.polygons) name += ` ${z.label}工区`;
+  if (!allCats) name += `（${req.categories.join('・')}）`;
+  if (req.member_ids) name += `（選択${req.member_ids.length}部材）`;
+  state.units.push({
+    name, z0: r.z0, z1: r.z1, rangeText: r.rangeText,
+    label: z.polygons ? z.label : null, polygons: z.polygons,
+    categories: allCats ? null : req.categories, member_ids: req.member_ids,
+  });
+  state.unitResult = null;
+  renderUnits();
+  runUnits();
+}
+
+let unitSeq = 0;
+async function runUnits() {
+  const seq = ++unitSeq;
+  if (!state.units.length) { state.unitResult = null; renderUnits(); return; }
+  const body = { units: state.units.map(({ name, z0, z1, polygons, categories, member_ids }) => ({ name, z0, z1, polygons, categories, member_ids })) };
+  const res = await fetch('/api/units', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  if (seq !== unitSeq) return;
+  if (!res.ok) { $('unitSummary').innerHTML = `<div class="warn">計算できません：${esc((await res.json()).detail)}</div>`; return; }
+  state.unitResult = await res.json();
+  renderUnits();
+}
+
+function renderUnits() {
+  const ur = state.unitResult;
+  const overlapping = new Set((ur?.overlaps ?? []).filter((o) => o.members.length).flatMap((o) => [o.a, o.b]));
+  $('unitHelp').classList.toggle('hidden', state.units.length > 0);
+  $('unitList').innerHTML = state.units.map((u, i) => {
+    const res = ur?.units[i];
+    const filters = [u.categories ? u.categories.join('・') : null, u.member_ids ? `選択${u.member_ids.length}部材` : null].filter(Boolean);
+    return `<li class="${overlapping.has(i) ? 'overlap' : ''}"><div class="unitrow">` +
+      `<span class="chip" style="background:${hex(ZONE_COLORS[u.label] ?? 0x90a4ae)}"></span>` +
+      `<input class="name" data-uname="${i}" value="${esc(u.name)}" title="区分名（変更できます）">` +
+      `<span class="num">${res ? `${fmt(res.total)} m³` : '計算中…'}</span><button data-udel="${i}">削除</button></div>` +
+      `<div class="muted">区分${i + 1}：${esc(u.rangeText)}　${u.label ? `工区${esc(u.label)}` : '範囲全体'}` +
+      `${filters.length ? `　絞り込み：${esc(filters.join('／'))}` : ''}` +
+      `${res?.uncomputed_count ? `　<span class="warn">⚠ 未計算 ${res.uncomputed_count} 件</span>` : ''}</div></li>`;
+  }).join('');
+  renderUnitSummary();
+}
+
+function renderUnitSummary() {
+  const ur = state.unitResult;
+  if (!ur || !state.units.length) { $('unitSummary').innerHTML = ''; return; }
+  const unitName = (i) => `区分${i + 1}「${esc(state.units[i].name)}」`;
+  let html = `<div class="unitsum">区分の合計<span class="num">${fmt(ur.sum_total)} m³</span></div>`;
+  // 同じ部材が2つの区分に入っている＝登録の誤りの可能性が高いので黄色で警告する
+  const shared = ur.overlaps.filter((o) => o.members.length);
+  // 別の部材どうしの食い込み（柱とスラブの取り合いなど）は、モデル上避けられないので注記にとどめる
+  const contact = ur.overlaps.filter((o) => o.volume - o.shared_volume > 0.0005);
+  if (shared.length) {
+    html += '<div class="overlapbox">⚠ 同じ部材が複数の区分に入っています。重なった部分は区分の合計で二重に数えています。';
+    for (const o of shared) {
+      html += `<div style="margin-top:6px"><b>${unitName(o.a)} と ${unitName(o.b)}</b>：${fmt(o.shared_volume)} m³</div>` +
+        `<details><summary>重なっている部材（${o.members.length}）</summary><table class="mini">` +
+        o.members.slice(0, 100).map((m) => `<tr><td>${esc(m.category)}</td><td>${esc(m.name)}</td><td class="num">${fmt(m.volume, 3)}</td></tr>`).join('') +
+        '</table></details>';
+    }
+    html += '</div>';
+  }
+  if (contact.length) {
+    html += '<div class="muted" style="margin-top:6px">部材どうしの食い込み（柱とスラブの取り合いなど）を両方の区分で数えている部分：' +
+      contact.map((o) => `区分${o.a + 1}と${o.b + 1}で ${fmt(o.volume - o.shared_volume, 3)} m³`).join('、') + '</div>';
+  }
+  if (ur.overlaps.length) {
+    html += `<div class="unitsum" style="margin-top:6px">重複を除いた合計<span class="num">${fmt(ur.union_total)} m³</span></div>`;
+  } else if (state.units.length > 1) {
+    html += '<div class="muted" style="margin-top:4px">区分どうしの重なりはありません</div>';
+  }
+  $('unitSummary').innerHTML = html;
 }
 
 // ---------- 初期化 ----------
@@ -605,6 +688,9 @@ async function loadModel() {
   state.boundaries = [];
   state.seeds = [];
   state.selected.clear();
+  state.units = [];
+  state.unitResult = null;
+  renderUnits();
   buildMeshes(await (await fetch('/api/meshes')).json());
   buildGrid();
   renderSidebar();
@@ -646,6 +732,21 @@ $('categories').addEventListener('change', (ev) => {
   ev.target.checked ? state.categories.add(c) : state.categories.delete(c);
   paint();
   scheduleCompute();
+});
+$('resultBody').addEventListener('click', (ev) => {
+  if (ev.target.dataset.reg !== undefined) registerUnit(Number(ev.target.dataset.reg));
+});
+$('unitList').addEventListener('click', (ev) => {
+  if (ev.target.dataset.udel === undefined) return;
+  state.units.splice(Number(ev.target.dataset.udel), 1);
+  state.unitResult = null;
+  renderUnits();
+  runUnits();
+});
+$('unitList').addEventListener('input', (ev) => {
+  if (ev.target.dataset.uname === undefined) return;
+  state.units[Number(ev.target.dataset.uname)].name = ev.target.value;
+  renderUnitSummary();
 });
 $('clearSel').addEventListener('click', () => { state.selected.clear(); onSelectionChanged(); });
 $('selectedOnly').addEventListener('change', (ev) => { state.selectedOnly = ev.target.checked; paint(); scheduleCompute(); });

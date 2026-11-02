@@ -80,4 +80,15 @@ table.mini td.num { text-align: right; font-variant-numeric: tabular-nums; }
 .warn { color: var(--warn); font-size: 12px; }
 .sum { background: #eef2f7; border-radius: 8px; padding: 10px; margin-bottom: 10px; }
 .sum .total { font-size: 22px; font-weight: bold; }
+.zone .reg { width: 100%; margin-top: 8px; }
+
+.units li { display: block; }
+.units li.overlap { background: #fff8e1; border-color: #f9a825; }
+.units .unitrow { display: flex; align-items: center; gap: 6px; }
+.units input.name { flex: 1; min-width: 0; padding: 3px 4px; border: 1px solid var(--line); border-radius: 4px; }
+.units .num { font-weight: bold; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.unitsum { background: #eef2f7; border-radius: 8px; padding: 8px 10px; font-size: 13px; }
+.unitsum .num { float: right; font-weight: bold; font-variant-numeric: tabular-nums; }
+.overlapbox { background: #fff8e1; border: 1px solid #f9a825; border-radius: 8px; padding: 8px 10px; margin-top: 6px; font-size: 12px; }
+.overlapbox b { color: #e65100; }
 details summary { cursor: pointer; font-size: 13px; padding: 8px 0; border-top: 1px solid var(--line); }

@@ -1,0 +1,9 @@
+﻿whole 372.90437727876
+whole∪whole 372.8593249819875 Error.NoError
+whole union genus/status Error.NoError 7672
+re-volume 372.90437727876
+units [278.5306, 94.3737, 372.9044] sum 745.8088 union 372.9044
+  overlap 0 2 278.5306 shared 278.5306
+  overlap 1 2 94.3737 shared 94.3737
+by category [168.3022, 204.6394] sum 372.9416 union 372.9044
+  overlap 0 1 0.0372 shared None
