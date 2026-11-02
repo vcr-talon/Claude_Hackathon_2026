@@ -31,8 +31,9 @@ const state = {
   view: 'plan',
   pending: null, // {axis, editIndex}
   result: null,
-  units: [], // 打設区分 {name, z0, z1, rangeText, label, polygons, categories, member_ids}
+  units: [], // 打設区分 {name, parts: [{z0, z1, rangeText, label, polygons, categories, member_ids}]}
   unitResult: null,
+  excludeRegistered: true, // 登録済みの区分と重なる部分を差し引く（先に登録した区分が優先）
 };
 
 // ---------- Three.js の準備 ----------
@@ -60,7 +61,8 @@ const gridGroup = new THREE.Group();
 const zoneGroup = new THREE.Group();
 const lineGroup = new THREE.Group();
 overlay.add(gridGroup, zoneGroup, lineGroup);
-scene.add(modelGroup, overlay);
+const excludedGroup = new THREE.Group(); // 登録済みの区分と重なり、差し引いた部分（灰色）
+scene.add(modelGroup, excludedGroup, overlay);
 
 // 高さ範囲の切断面：z0以上、z1以下だけを描画する
 const clipBottom = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
@@ -139,6 +141,21 @@ function buildMeshes(solids) {
     modelGroup.add(mesh);
     return mesh;
   });
+}
+
+const excludedMat = new THREE.MeshLambertMaterial({
+  color: 0x4f5459, side: THREE.DoubleSide, clippingPlanes: clips, // スラブの薄い灰色と区別できる濃さ
+  polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2, // 元の部材の面より手前に描く
+});
+function drawExcluded(mesh) {
+  excludedGroup.clear();
+  if (!mesh) return;
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(decode(mesh.pos, Float32Array), 3));
+  g.setIndex(new THREE.BufferAttribute(decode(mesh.idx, Uint32Array), 1));
+  const flat = g.toNonIndexed();
+  flat.computeVertexNormals();
+  excludedGroup.add(new THREE.Mesh(flat, excludedMat));
 }
 
 function paint() {
@@ -276,17 +293,29 @@ function setView(view) {
 // ---------- 高さ範囲 ----------
 const elev = (name) => state.meta.storeys.find((s) => s.name === name).elevation;
 
+const ALL_STOREYS = '__all__';
+
 function fillStoreys() {
   for (const id of ['storey', 'upBase', 'lowBase']) {
     $(id).innerHTML = state.meta.storeys.map((s) => `<option>${esc(s.name)}</option>`).join('');
   }
-  const names = state.meta.storeys.map((s) => s.name);
-  $('storey').value = names.includes('5SL') ? '5SL' : names[0];
+  $('storey').insertAdjacentHTML('afterbegin', `<option value="${ALL_STOREYS}">モデル全体</option>`);
+  $('storey').value = ALL_STOREYS;
   onStoreyChange();
 }
 
 function onStoreyChange() {
   const names = state.meta.storeys.map((s) => s.name);
+  if ($('storey').value === ALL_STOREYS) {
+    // 最下階・最上階からの寸法で、モデル全体の高さを50mm単位で包む
+    const [zmin, zmax] = state.meta.z_range, lo = names[0], up = names[names.length - 1];
+    $('lowBase').value = lo;
+    $('upBase').value = up;
+    $('lowOff').value = Math.floor((zmin - elev(lo)) * 20) * 50;
+    $('upOff').value = Math.ceil((zmax - elev(up)) * 20) * 50;
+    applyRange();
+    return;
+  }
   const i = names.indexOf($('storey').value);
   $('lowBase').value = names[i];
   $('upBase').value = names[Math.min(i + 1, names.length - 1)];
@@ -525,6 +554,7 @@ async function runCompute() {
     seeds: state.seeds,
     categories: [...state.categories],
     member_ids: state.selectedOnly ? [...state.selected] : null,
+    exclude_parts: state.excludeRegistered ? allParts() : [],
   };
   const res = await fetch('/api/compute', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
   if (seq !== computeSeq) return;
@@ -535,6 +565,7 @@ async function runCompute() {
   // 登録時に「計算した時点の条件」をそのまま使えるよう、条件も一緒に持っておく
   state.result = { ...(await res.json()), request: body, rangeText: $('rangeText').textContent };
   state.regions = state.result.regions;
+  drawExcluded(state.result.excluded_mesh);
   drawZones();
   renderResults();
 }
@@ -564,6 +595,7 @@ function renderResults() {
     const color = ZONE_COLORS[z.label];
     html += `<div class="zone"><h3>${color ? `<span class="chip" style="background:${hex(color)}"></span>工区 ` : ''}${esc(z.label)}</h3>`;
     html += `<div class="total">${fmt(z.total)} <small>m³</small></div>`;
+    if (z.excluded > 0.0005) html += `<div class="excluded">登録済みの区分と重なる ${fmt(z.excluded)} m³ を除外（灰色表示）</div>`;
     html += '<table class="mini">';
     for (const [cat, v] of Object.entries(z.by_category)) {
       if (v < 0.0005) continue;
@@ -583,7 +615,15 @@ function renderResults() {
     html += `<details><summary>対象部材の一覧</summary><table class="mini">` +
       z.members.slice(0, 300).map((m) => `<tr><td>${esc(m.category)}</td><td>${esc(m.name)}</td><td class="num">${fmt(m.volume, 3)}</td></tr>`).join('') +
       '</table><div class="muted">部材ごとの値は範囲内に切り取った体積（重複控除前）</div></details>';
-    if (z.total > 0) html += `<button class="reg" data-reg="${r.zones.indexOf(z)}">＋ 打設区分に登録</button>`;
+    if (z.total > 0) {
+      const zi = r.zones.indexOf(z);
+      html += `<div class="regrow"><button class="reg" data-reg="${zi}">＋ 新しい区分として登録</button>`;
+      if (state.units.length) {
+        html += `<select data-addto="${zi}"><option value="">既存の区分に追加…</option>` +
+          state.units.map((u, i) => `<option value="${i}">区分${i + 1}「${esc(u.name)}」に追加</option>`).join('') + '</select>';
+      }
+      html += '</div>';
+    }
     html += '</div>';
   }
   html += '<div class="muted">内訳は「柱→梁→壁→スラブ→基礎→階段→その他」の順で重なりを配分した参考値です。総数量は重複を除いた体積です。</div>';
@@ -591,28 +631,51 @@ function renderResults() {
 }
 
 // ---------- 打設区分 ----------
-function registerUnit(zi) {
+const partJson = ({ z0, z1, polygons, categories, member_ids }) => ({ z0, z1, polygons, categories, member_ids });
+const allParts = () => state.units.flatMap((u) => u.parts.map(partJson));
+
+// target が null なら新しい区分、数値ならその区分に条件を追加する
+function registerUnit(zi, target = null) {
   const r = state.result, z = r.zones[zi], req = r.request;
   const allCats = req.categories.length === state.meta.categories.length;
-  let name = r.rangeText.split('（')[0];
-  if (z.polygons) name += ` ${z.label}工区`;
-  if (!allCats) name += `（${req.categories.join('・')}）`;
-  if (req.member_ids) name += `（選択${req.member_ids.length}部材）`;
-  state.units.push({
-    name, z0: r.z0, z1: r.z1, rangeText: r.rangeText,
+  const part = {
+    z0: r.z0, z1: r.z1, rangeText: r.rangeText,
     label: z.polygons ? z.label : null, polygons: z.polygons,
     categories: allCats ? null : req.categories, member_ids: req.member_ids,
-  });
+  };
+  if (target !== null) {
+    state.units[target].parts.push(part);
+  } else {
+    let name = r.rangeText.split('（')[0];
+    if (z.polygons) name += ` ${z.label}工区`;
+    if (!allCats) name += `（${req.categories.join('・')}）`;
+    if (req.member_ids) name += `（選択${req.member_ids.length}部材）`;
+    state.units.push({ name, parts: [part] });
+  }
+  onUnitsChanged();
+}
+
+function onUnitsChanged() {
   state.unitResult = null;
   renderUnits();
   runUnits();
+  if (state.excludeRegistered) scheduleCompute(); // 登録した部分を今の計算から差し引く
+  else if (state.result) renderResults(); // 「既存の区分に追加」の選択肢を更新
+}
+
+function partText(p) {
+  const filters = [p.categories ? p.categories.join('・') : null, p.member_ids ? `選択${p.member_ids.length}部材` : null].filter(Boolean);
+  return `${p.rangeText}　${p.label ? `工区${p.label}` : '範囲全体'}${filters.length ? `　絞り込み：${filters.join('／')}` : ''}`;
 }
 
 let unitSeq = 0;
 async function runUnits() {
   const seq = ++unitSeq;
   if (!state.units.length) { state.unitResult = null; renderUnits(); return; }
-  const body = { units: state.units.map(({ name, z0, z1, polygons, categories, member_ids }) => ({ name, z0, z1, polygons, categories, member_ids })) };
+  const body = {
+    units: state.units.map((u) => ({ name: u.name, parts: u.parts.map(partJson) })),
+    exclude_registered: state.excludeRegistered,
+  };
   const res = await fetch('/api/units', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
   if (seq !== unitSeq) return;
   if (!res.ok) { $('unitSummary').innerHTML = `<div class="warn">計算できません：${esc((await res.json()).detail)}</div>`; return; }
@@ -626,14 +689,15 @@ function renderUnits() {
   $('unitHelp').classList.toggle('hidden', state.units.length > 0);
   $('unitList').innerHTML = state.units.map((u, i) => {
     const res = ur?.units[i];
-    const filters = [u.categories ? u.categories.join('・') : null, u.member_ids ? `選択${u.member_ids.length}部材` : null].filter(Boolean);
+    const label = u.parts.find((p) => p.label)?.label;
+    const parts = u.parts.map((p, k) => `<div class="part muted">${u.parts.length > 1 ? `${k + 1}. ` : ''}${esc(partText(p))}` +
+      `${u.parts.length > 1 ? ` <button class="x" data-pdel="${i}:${k}" title="この条件を外す">×</button>` : ''}</div>`).join('');
     return `<li class="${overlapping.has(i) ? 'overlap' : ''}"><div class="unitrow">` +
-      `<span class="chip" style="background:${hex(ZONE_COLORS[u.label] ?? 0x90a4ae)}"></span>` +
+      `<span class="chip" style="background:${hex(ZONE_COLORS[label] ?? 0x90a4ae)}"></span>` +
       `<input class="name" data-uname="${i}" value="${esc(u.name)}" title="区分名（変更できます）">` +
       `<span class="num">${res ? `${fmt(res.total)} m³` : '計算中…'}</span><button data-udel="${i}">削除</button></div>` +
-      `<div class="muted">区分${i + 1}：${esc(u.rangeText)}　${u.label ? `工区${esc(u.label)}` : '範囲全体'}` +
-      `${filters.length ? `　絞り込み：${esc(filters.join('／'))}` : ''}` +
-      `${res?.uncomputed_count ? `　<span class="warn">⚠ 未計算 ${res.uncomputed_count} 件</span>` : ''}</div></li>`;
+      `<div class="muted">区分${i + 1}${res?.uncomputed_count ? `　<span class="warn">⚠ 未計算 ${res.uncomputed_count} 件</span>` : ''}</div>` +
+      `${parts}</li>`;
   }).join('');
   renderUnitSummary();
 }
@@ -663,6 +727,8 @@ function renderUnitSummary() {
   }
   if (ur.overlaps.length) {
     html += `<div class="unitsum" style="margin-top:6px">重複を除いた合計<span class="num">${fmt(ur.union_total)} m³</span></div>`;
+  } else if (state.excludeRegistered && state.units.length > 1) {
+    html += '<div class="muted" style="margin-top:4px">先に登録した区分を優先し、後の区分から重なりを差し引いています（二重拾いなし）</div>';
   } else if (state.units.length > 1) {
     html += '<div class="muted" style="margin-top:4px">区分どうしの重なりはありません</div>';
   }
@@ -676,7 +742,8 @@ const RANGE_IDS = ['storey', 'upBase', 'upOff', 'lowBase', 'lowOff'];
 function savePlan() {
   if (!state.meta) return;
   const plan = {
-    format: PLAN_FORMAT, version: 1, saved_at: new Date().toISOString(), source: state.meta.source,
+    format: PLAN_FORMAT, version: 2, saved_at: new Date().toISOString(), source: state.meta.source,
+    excludeRegistered: state.excludeRegistered,
     range: Object.fromEntries(RANGE_IDS.map((id) => [id, $(id).value])),
     boundaries: state.boundaries, seeds: state.seeds,
     categories: [...state.categories], selected: [...state.selected], selectedOnly: state.selectedOnly,
@@ -695,7 +762,7 @@ function savePlan() {
 function applyPlan(plan) {
   if (plan.format !== PLAN_FORMAT) throw new Error('このアプリで保存した工区割ファイルではありません');
   const storeys = new Set(state.meta.storeys.map((s) => s.name));
-  const missing = ['storey', 'upBase', 'lowBase'].map((id) => plan.range[id]).filter((n) => !storeys.has(n));
+  const missing = ['storey', 'upBase', 'lowBase'].map((id) => plan.range[id]).filter((n) => n !== ALL_STOREYS && !storeys.has(n));
   if (missing.length) throw new Error(`開いているIFCに無い階があります（${[...new Set(missing)].join('、')}）`);
   const tags = new Set(state.meta.grids.map((a) => a.tag));
   const lost = plan.boundaries.filter((b) => !tags.has(b.axis)).map((b) => b.axis);
@@ -710,8 +777,11 @@ function applyPlan(plan) {
   state.selected = new Set(plan.selected.filter((id) => id in state.meta.members));
   state.selectedOnly = plan.selectedOnly;
   $('selectedOnly').checked = plan.selectedOnly;
-  state.units = plan.units;
+  // version 1 は区分が条件を1つだけ持つ形式
+  state.units = plan.units.map((u) => (u.parts ? u : { name: u.name, parts: [{ ...u, name: undefined }] }));
   state.unitResult = null;
+  state.excludeRegistered = plan.excludeRegistered ?? true;
+  $('excludeRegistered').checked = state.excludeRegistered;
   $('selInfo').textContent = state.selected.size ? `${state.selected.size} 部材を選択中` : '';
   renderBoundaryList();
   renderUnits();
@@ -763,6 +833,7 @@ async function loadModel() {
   fillStoreys();
   resize();
   fit();
+  setView('3d'); // 読込直後はモデル全体を3Dで見せる
   $('loading').classList.add('hidden');
 }
 
@@ -801,12 +872,26 @@ $('categories').addEventListener('change', (ev) => {
 $('resultBody').addEventListener('click', (ev) => {
   if (ev.target.dataset.reg !== undefined) registerUnit(Number(ev.target.dataset.reg));
 });
+$('resultBody').addEventListener('change', (ev) => {
+  if (ev.target.dataset.addto === undefined || ev.target.value === '') return;
+  registerUnit(Number(ev.target.dataset.addto), Number(ev.target.value));
+});
 $('unitList').addEventListener('click', (ev) => {
-  if (ev.target.dataset.udel === undefined) return;
-  state.units.splice(Number(ev.target.dataset.udel), 1);
+  const { udel, pdel } = ev.target.dataset;
+  if (udel !== undefined) {
+    state.units.splice(Number(udel), 1);
+  } else if (pdel !== undefined) {
+    const [i, k] = pdel.split(':').map(Number);
+    state.units[i].parts.splice(k, 1);
+  } else return;
+  onUnitsChanged();
+});
+$('excludeRegistered').addEventListener('change', (ev) => {
+  state.excludeRegistered = ev.target.checked;
   state.unitResult = null;
   renderUnits();
   runUnits();
+  scheduleCompute();
 });
 $('unitList').addEventListener('input', (ev) => {
   if (ev.target.dataset.uname === undefined) return;

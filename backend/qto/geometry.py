@@ -5,6 +5,7 @@
 """
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 import manifold3d as m3
@@ -153,6 +154,8 @@ class Result:
     members: list[MemberVolume]
     uncomputed: list[Uncomputed]
     union: m3.Manifold | None = field(default=None, repr=False)
+    excluded: float = 0.0  # 登録済みの区分と重なるため差し引いた体積
+    excluded_pieces: list[m3.Manifold] = field(default_factory=list, repr=False)
 
     @property
     def overlap(self) -> float:
@@ -174,10 +177,12 @@ def _bbox_overlaps(s: Solid, z0: float, z1: float, region_prep, region_bounds) -
 
 def compute(solids: list[Solid], z0: float, z1: float, region: BaseGeometry | None = None,
             categories: set[str] | None = None, member_ids: set[str] | None = None,
-            category_order: list[str] = CATEGORY_ORDER) -> Result:
+            category_order: list[str] = CATEGORY_ORDER,
+            exclude: Callable[[Solid], m3.Manifold | None] | None = None) -> Result:
     """打設区分（工区 × 高さ範囲 × 部材の絞り込み）のコンクリート体積を計算する。
 
     region が None の場合は平面方向に制限しない（高さ範囲のみ）。
+    exclude は立体ごとに「差し引く型」を返す関数（登録済みの区分の除外に使う）。
     """
     if z0 > z1:
         z0, z1 = z1, z0
@@ -199,6 +204,7 @@ def compute(solids: list[Solid], z0: float, z1: float, region: BaseGeometry | No
 
     uncomputed: list[Uncomputed] = []
     pieces: list[tuple[Solid, m3.Manifold, float]] = []
+    excluded_pieces: list[m3.Manifold] = []
     for s in candidates:
         if s.manifold is None:
             uncomputed.append(Uncomputed(s.member_id, s.member_name, s.category, s.key,
@@ -209,6 +215,12 @@ def compute(solids: list[Solid], z0: float, z1: float, region: BaseGeometry | No
             piece = s.manifold  # 全体が範囲内なので切断不要
         else:
             piece = m3.Manifold.batch_boolean([s.manifold, prism], m3.OpType.Intersect)
+        cut = exclude(s) if exclude is not None else None
+        if cut is not None:
+            removed = m3.Manifold.batch_boolean([piece, cut], m3.OpType.Intersect)
+            if removed.volume() > EPS_VOLUME:
+                excluded_pieces.append(removed)
+                piece = m3.Manifold.batch_boolean([piece, cut], m3.OpType.Subtract)
         v = piece.volume()
         if v > EPS_VOLUME:
             pieces.append((s, piece, v))
@@ -230,5 +242,7 @@ def compute(solids: list[Solid], z0: float, z1: float, region: BaseGeometry | No
     else:
         by_material = {k: sum(p.volume() for p in g) for k, g in by_mat_groups.items()}
     total = union.volume() if union is not None else 0.0
+    excluded = _union(excluded_pieces).volume() if excluded_pieces else 0.0
     return Result(z0, z1, total, sum(v for _, _, v in pieces), by_category, by_material,
-                  sorted(members.values(), key=lambda m: -m.volume), uncomputed, union)
+                  sorted(members.values(), key=lambda m: -m.volume), uncomputed, union,
+                  excluded, excluded_pieces)

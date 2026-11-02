@@ -25,7 +25,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from qto.geometry import CATEGORY_ORDER, Result, compute  # noqa: E402
 from qto.ifc_loader import Model, load_model  # noqa: E402
 from qto.partition import ZoneSeed, assign_zones, split_regions  # noqa: E402
-from qto.units import PourUnit, compute_units, region_from_rings  # noqa: E402
+from qto.units import PourUnit, Unit, compute_units, make_excluder, region_from_rings  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 FRONTEND = ROOT / "frontend"
@@ -111,6 +111,21 @@ class Seed(BaseModel):
     y: float
 
 
+class PartRequest(BaseModel):
+    """区分を構成する1つの条件。"""
+
+    z0: float
+    z1: float
+    polygons: list[list[list[tuple[float, float]]]] | None = None
+    categories: list[str] | None = None
+    member_ids: list[str] | None = None
+
+    def to_part(self, name: str = "") -> PourUnit:
+        return PourUnit(name, min(self.z0, self.z1), max(self.z0, self.z1), region_from_rings(self.polygons),
+                        set(self.categories) if self.categories is not None else None,
+                        set(self.member_ids) if self.member_ids is not None else None)
+
+
 class ComputeRequest(BaseModel):
     z0: float
     z1: float
@@ -118,12 +133,28 @@ class ComputeRequest(BaseModel):
     seeds: list[Seed] = []
     categories: list[str] | None = None
     member_ids: list[str] | None = None
+    exclude_parts: list[PartRequest] = []  # 登録済みの区分の条件（重なる部分を差し引く）
+
+
+def _mesh_json(pieces: list) -> dict | None:
+    """切断片をまとめて1つの表示用メッシュにする。"""
+    verts, tris, offset = [], [], 0
+    for p in pieces:
+        m = p.to_mesh()
+        v = np.asarray(m.vert_properties)[:, :3]
+        verts.append(v)
+        tris.append(np.asarray(m.tri_verts) + offset)
+        offset += len(v)
+    if not verts:
+        return None
+    return {"pos": _b64(np.vstack(verts), np.float32), "idx": _b64(np.vstack(tris), np.uint32)}
 
 
 def _result_json(r: Result, label: str, region) -> dict:
     return {
         "label": label,
         "total": r.total,
+        "excluded": r.excluded,
         "raw_sum": r.raw_sum,
         "overlap": r.overlap,
         "by_category": r.by_category,
@@ -146,57 +177,50 @@ def api_compute(req: ComputeRequest):
         raise HTTPException(400, str(e)) from e
     cats = set(req.categories) if req.categories is not None else None
     ids = set(req.member_ids) if req.member_ids is not None else None
+    exclude = make_excluder([p.to_part() for p in req.exclude_parts])
 
-    zones = {}
+    zones: dict = {}
     if regions is not None and req.seeds:
         zones = assign_zones(regions, [ZoneSeed(s.label, s.x, s.y) for s in req.seeds])
-    results = [_result_json(compute(model.solids, req.z0, req.z1, region=poly, categories=cats, member_ids=ids),
-                            label, poly) for label, poly in sorted(zones.items())]
-    if not results:
-        results = [_result_json(compute(model.solids, req.z0, req.z1, categories=cats, member_ids=ids),
-                                "範囲全体", None)]
+    if not zones:
+        zones = {"範囲全体": None}
+    results, excluded_pieces = [], []
+    for label, poly in sorted(zones.items()):
+        r = compute(model.solids, req.z0, req.z1, region=poly, categories=cats, member_ids=ids, exclude=exclude)
+        results.append(_result_json(r, label, poly))
+        excluded_pieces += r.excluded_pieces
     return {
         "z0": min(req.z0, req.z1),
         "z1": max(req.z0, req.z1),
         "zones": results,
         "regions": [_rings(r) for r in regions] if regions is not None else [],
+        "excluded_mesh": _mesh_json(excluded_pieces),
     }
 
 
 class UnitRequest(BaseModel):
     name: str
-    z0: float
-    z1: float
-    polygons: list[list[list[tuple[float, float]]]] | None = None
-    categories: list[str] | None = None
-    member_ids: list[str] | None = None
+    parts: list[PartRequest]
 
 
 class UnitsRequest(BaseModel):
     units: list[UnitRequest]
-
-
-def _members_json(r: Result) -> list[dict]:
-    return [{"member_id": m.member_id, "name": m.member_name, "category": m.category, "volume": m.volume}
-            for m in r.members]
+    exclude_registered: bool = True
 
 
 @app.post("/api/units")
 def api_units(req: UnitsRequest):
     model = get_model()
-    units = [PourUnit(u.name, min(u.z0, u.z1), max(u.z0, u.z1), region_from_rings(u.polygons),
-                      set(u.categories) if u.categories is not None else None,
-                      set(u.member_ids) if u.member_ids is not None else None) for u in req.units]
-    res = compute_units(model.solids, units)
+    units = [Unit(u.name, [p.to_part(u.name) for p in u.parts]) for u in req.units]
+    res = compute_units(model.solids, units, exclude_registered=req.exclude_registered)
     return {
-        "units": [{"name": u.name, "total": r.total, "by_category": r.by_category,
-                   "member_count": len(r.members), "uncomputed_count": len(r.uncomputed)}
-                  for u, r in zip(units, res.results)],
+        "units": [{"name": u.name, "total": r.total, "member_count": len(r.member_ids),
+                   "uncomputed_count": r.uncomputed} for u, r in zip(units, res.results)],
         "sum_total": res.sum_total,
         "union_total": res.union_total,
-        "overlaps": [{"a": o.a, "b": o.b, "volume": o.volume,
-                      "shared_volume": o.shared.total if o.shared else 0.0,
-                      "members": _members_json(o.shared) if o.shared else []}
+        "overlaps": [{"a": o.a, "b": o.b, "volume": o.volume, "shared_volume": o.shared_volume,
+                      "members": [{"member_id": m.member_id, "name": m.member_name, "category": m.category,
+                                   "volume": m.volume} for m in o.shared_members]}
                      for o in res.overlaps],
     }
 
