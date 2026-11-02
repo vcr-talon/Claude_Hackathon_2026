@@ -134,6 +134,31 @@ def make_excluder(parts: list[PourUnit]) -> Callable[[Solid], m3.Manifold | None
     return _Clipper(parts) if parts else None
 
 
+def fully_excluded_keys(solids: list[Solid], z0: float, z1: float,
+                        exclude: Callable[[Solid], m3.Manifold | None] | None) -> list[str]:
+    """高さ範囲内の部分がすべて登録済みの区分に含まれる立体のキー。
+
+    表示でこれらの元の形状を隠し、灰色の除外部分と面が重なってちらつくのを防ぐ。
+    """
+    if exclude is None:
+        return []
+    keys = []
+    for s in solids:
+        if s.manifold is None or s.bbox[5] <= z0 or s.bbox[2] >= z1:
+            continue
+        cut = exclude(s)
+        if cut is None:
+            continue
+        xmin, ymin, zmin, xmax, ymax, zmax = s.bbox
+        piece = s.manifold
+        if zmin < z0 or zmax > z1:
+            piece = m3.Manifold.batch_boolean(
+                [piece, region_prism(box(xmin - 1, ymin - 1, xmax + 1, ymax + 1), z0, z1)], m3.OpType.Intersect)
+        if m3.Manifold.batch_boolean([piece, cut], m3.OpType.Subtract).volume() <= EPS_VOLUME:
+            keys.append(s.key)
+    return keys
+
+
 def _unit_total(solids: list[Solid], parts: list[PourUnit], exclude_parts: list[PourUnit] | None = None
                 ) -> tuple[UnitTotal, list[m3.Manifold]]:
     clip, cut = _Clipper(parts), make_excluder(exclude_parts or [])

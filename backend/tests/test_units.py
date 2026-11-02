@@ -3,7 +3,7 @@ import pytest
 from shapely.geometry import box
 
 from qto.geometry import compute
-from qto.units import PourUnit, Unit, compute_units, make_excluder, region_from_rings
+from qto.units import PourUnit, Unit, compute_units, fully_excluded_keys, make_excluder, region_from_rings
 from test_geometry import REL, box_solid
 
 
@@ -117,6 +117,17 @@ def test_compute_excludes_registered_parts():
     assert r.total == pytest.approx(3.0, rel=REL)
     assert r.excluded == pytest.approx(2.0, rel=REL)
     assert [m.member_id for m in r.members] == ["col2"]
+
+
+def test_fully_excluded_keys():
+    """1階区分に全部入る立体だけを返す。2階の柱は1階区分と重ならないので返さない。"""
+    solids = _parapet_model()
+    exclude = make_excluder([PourUnit("1F", 0, 3), PourUnit("パラペット", 3, 4, member_ids={"parapet"})])
+    assert sorted(fully_excluded_keys(solids, 0, 6, exclude)) == ["col1", "parapet", "slab"]
+    # 高さ範囲内の部分だけで判定する（2.0〜3.0 なら1階の柱もスラブも全部登録済み）
+    assert sorted(fully_excluded_keys(solids, 2, 3, make_excluder([PourUnit("下", 0, 3)]))) == ["col1", "slab"]
+    # 一部しか登録されていない立体は返さない
+    assert fully_excluded_keys(solids, 0, 3, make_excluder([PourUnit("半分", 0, 3, box(-1, -1, 5, 5))])) == ["col1"]
 
 
 def test_region_from_rings_keeps_holes():

@@ -34,6 +34,7 @@ const state = {
   units: [], // 打設区分 {name, parts: [{z0, z1, rangeText, label, polygons, categories, member_ids}]}
   unitResult: null,
   excludeRegistered: true, // 登録済みの区分と重なる部分を差し引く（先に登録した区分が優先）
+  hiddenKeys: new Set(), // 高さ範囲内がすべて登録済みの立体（表示しない）
 };
 
 // ---------- Three.js の準備 ----------
@@ -145,7 +146,7 @@ function buildMeshes(solids) {
 
 const excludedMat = new THREE.MeshLambertMaterial({
   color: 0x4f5459, side: THREE.DoubleSide, clippingPlanes: clips, // スラブの薄い灰色と区別できる濃さ
-  polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2, // 元の部材の面より手前に描く
+  polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -16, // 元の部材の面より手前に描く
 });
 function drawExcluded(mesh) {
   excludedGroup.clear();
@@ -155,14 +156,17 @@ function drawExcluded(mesh) {
   g.setIndex(new THREE.BufferAttribute(decode(mesh.idx, Uint32Array), 1));
   const flat = g.toNonIndexed();
   flat.computeVertexNormals();
-  excludedGroup.add(new THREE.Mesh(flat, excludedMat));
+  const mesh3 = new THREE.Mesh(flat, excludedMat);
+  mesh3.add(new THREE.LineSegments(new THREE.EdgesGeometry(g, 25), edgeMat)); // 元の形状を隠しても輪郭が分かるように
+  excludedGroup.add(mesh3);
 }
 
 function paint() {
   const dimOthers = state.selectedOnly && state.selected.size > 0;
   for (const m of meshes) {
     const u = m.userData;
-    m.visible = state.categories.has(u.category) && u.bbox.max.z > state.z0 && u.bbox.min.z < state.z1;
+    m.visible = state.categories.has(u.category) && u.bbox.max.z > state.z0 && u.bbox.min.z < state.z1
+      && !state.hiddenKeys.has(u.key); // 全部が登録済みの部材は灰色の除外部分だけを見せる
     let color = CAT_COLORS[u.category] ?? CAT_COLORS['その他'];
     let opacity = 1;
     if (!u.ok) color = ERROR_COLOR;
@@ -566,6 +570,8 @@ async function runCompute() {
   state.result = { ...(await res.json()), request: body, rangeText: $('rangeText').textContent };
   state.regions = state.result.regions;
   drawExcluded(state.result.excluded_mesh);
+  state.hiddenKeys = new Set(state.result.hidden_keys);
+  paint();
   drawZones();
   renderResults();
 }
@@ -644,15 +650,26 @@ function registerUnit(zi, target = null) {
     categories: allCats ? null : req.categories, member_ids: req.member_ids,
   };
   if (target !== null) {
-    state.units[target].parts.push(part);
+    const u = state.units[target];
+    u.parts.push(part);
+    if (u.autoName) u.name = unitName(u.parts);
   } else {
-    let name = r.rangeText.split('（')[0];
-    if (z.polygons) name += ` ${z.label}工区`;
-    if (!allCats) name += `（${req.categories.join('・')}）`;
-    if (req.member_ids) name += `（選択${req.member_ids.length}部材）`;
-    state.units.push({ name, parts: [part] });
+    state.units.push({ name: unitName([part]), parts: [part], autoName: true });
   }
   onUnitsChanged();
+}
+
+// 条件から区分名を作る。高さ範囲と絞り込みが同じ条件は工区名をまとめる（例：4SL ～ 5SL A・B工区）
+function unitName(parts) {
+  const groups = new Map();
+  for (const p of parts) {
+    const filters = (p.categories ? `（${p.categories.join('・')}）` : '') + (p.member_ids ? `（選択${p.member_ids.length}部材）` : '');
+    const key = p.rangeText.split('（')[0] + filters;
+    if (!groups.has(key)) groups.set(key, { range: p.rangeText.split('（')[0], filters, labels: new Set() });
+    if (p.label) groups.get(key).labels.add(p.label);
+  }
+  return [...groups.values()].map((g) =>
+    g.range + (g.labels.size ? ` ${[...g.labels].sort().join('・')}工区` : '') + g.filters).join(' ＋ ');
 }
 
 function onUnitsChanged() {
@@ -882,7 +899,9 @@ $('unitList').addEventListener('click', (ev) => {
     state.units.splice(Number(udel), 1);
   } else if (pdel !== undefined) {
     const [i, k] = pdel.split(':').map(Number);
-    state.units[i].parts.splice(k, 1);
+    const u = state.units[i];
+    u.parts.splice(k, 1);
+    if (u.autoName) u.name = unitName(u.parts);
   } else return;
   onUnitsChanged();
 });
@@ -895,7 +914,9 @@ $('excludeRegistered').addEventListener('change', (ev) => {
 });
 $('unitList').addEventListener('input', (ev) => {
   if (ev.target.dataset.uname === undefined) return;
-  state.units[Number(ev.target.dataset.uname)].name = ev.target.value;
+  const u = state.units[Number(ev.target.dataset.uname)];
+  u.name = ev.target.value;
+  u.autoName = false; // 手で付けた名前は、条件を追加しても上書きしない
   renderUnitSummary();
 });
 $('clearSel').addEventListener('click', () => { state.selected.clear(); onSelectionChanged(); });

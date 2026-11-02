@@ -25,7 +25,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from qto.geometry import CATEGORY_ORDER, Result, compute  # noqa: E402
 from qto.ifc_loader import Model, load_model  # noqa: E402
 from qto.partition import ZoneSeed, assign_zones, split_regions  # noqa: E402
-from qto.units import PourUnit, Unit, compute_units, make_excluder, region_from_rings  # noqa: E402
+from qto.units import (  # noqa: E402
+    PourUnit, Unit, compute_units, fully_excluded_keys, make_excluder, region_from_rings,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 FRONTEND = ROOT / "frontend"
@@ -195,6 +197,8 @@ def api_compute(req: ComputeRequest):
         "zones": results,
         "regions": [_rings(r) for r in regions] if regions is not None else [],
         "excluded_mesh": _mesh_json(excluded_pieces),
+        "hidden_keys": fully_excluded_keys(model.solids, min(req.z0, req.z1), max(req.z0, req.z1), exclude)
+        if excluded_pieces else [],
     }
 
 
