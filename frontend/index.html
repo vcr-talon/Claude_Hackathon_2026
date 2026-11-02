@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>コンクリート数量算出</title>
+  <link rel="stylesheet" href="style.css">
+  <script type="importmap">
+    { "imports": { "three": "./vendor/three.module.js", "three/addons/": "./vendor/addons/" } }
+  </script>
+</head>
+<body>
+  <aside id="sidebar">
+    <header>
+      <h1>コンクリート数量算出</h1>
+      <div id="modelInfo" class="muted">読込中…</div>
+      <label class="filebtn">IFCを開く<input type="file" id="fileInput" accept=".ifc"></label>
+    </header>
+
+    <section>
+      <h2>1. 施工階と高さ範囲</h2>
+      <label class="row">施工階 <select id="storey"></select></label>
+      <div class="range">
+        <span class="tag">上限</span><select id="upBase"></select>
+        <input id="upOff" type="number" step="50" value="0"><span>mm</span>
+      </div>
+      <div class="range">
+        <span class="tag">下限</span><select id="lowBase"></select>
+        <input id="lowOff" type="number" step="50" value="0"><span>mm</span>
+      </div>
+      <div id="rangeText" class="muted"></div>
+    </section>
+
+    <section>
+      <h2>2. 工区割</h2>
+      <div class="modes">
+        <button data-mode="boundary" class="mode">境界線を引く</button>
+        <button data-mode="zone" class="mode">工区名を付ける</button>
+      </div>
+      <div id="boundaryHelp" class="help hidden">平面図で通り芯をクリック → 離れ寸法を入力 → 確定</div>
+      <div id="pending" class="pending hidden">
+        <div>通り芯 <b id="pendingAxis"></b> から</div>
+        <div class="range">
+          <input id="pendingOff" type="number" step="50" value="0"><span>mm</span>
+          <button id="pendingOk" class="primary">確定</button><button id="pendingCancel">取消</button>
+        </div>
+        <div class="muted">＋は X方向の線なら右（+X）、Y方向の線なら上（+Y）</div>
+      </div>
+      <div id="zoneLabels" class="zonelabels hidden"></div>
+      <div id="zoneHelp" class="help hidden">工区名を選び、平面図の範囲をクリック（同じ範囲を再クリックで解除）</div>
+      <ul id="boundaryList" class="list"></ul>
+    </section>
+
+    <section>
+      <h2>3. 部材の絞り込み</h2>
+      <div id="categories" class="checks"></div>
+      <div class="modes">
+        <button data-mode="select" class="mode">部材を選択</button>
+        <button id="clearSel">選択解除</button>
+      </div>
+      <div id="selectHelp" class="help hidden">クリックで選択、Shift+クリックで追加、ドラッグで範囲選択（移動は右ドラッグ）</div>
+      <label class="row"><input type="checkbox" id="selectedOnly"> 選択した部材だけで集計</label>
+      <div id="selInfo" class="muted"></div>
+    </section>
+
+    <details>
+      <summary>材料の判定（対象／除外）</summary>
+      <table id="materials" class="mini"></table>
+    </details>
+  </aside>
+
+  <main id="viewport">
+    <div class="viewbtns">
+      <button data-view="plan" class="view active">平面</button>
+      <button data-view="3d" class="view">3D</button>
+      <button id="fit">全体表示</button>
+    </div>
+    <div id="hint" class="hint"></div>
+    <div id="loading" class="loading">IFCを読み込んでいます…</div>
+  </main>
+
+  <aside id="results">
+    <h2>計算結果</h2>
+    <div id="resultBody" class="muted">高さ範囲を選ぶと計算します</div>
+  </aside>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>

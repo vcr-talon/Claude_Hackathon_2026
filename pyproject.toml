@@ -1,0 +1,21 @@
+[project]
+name = "ifc-concrete-qto"
+version = "0.1.0"
+description = "IFCのBIMデータから、工区・高さ範囲で切断したコンクリート体積を算出するローカルWebアプリ"
+requires-python = ">=3.12"
+dependencies = [
+    "ifcopenshell>=0.8",
+    "manifold3d>=3.0",
+    "shapely>=2.0",
+    "numpy",
+    "fastapi",
+    "uvicorn[standard]",
+    "python-multipart",
+]
+
+[project.optional-dependencies]
+dev = ["pytest"]
+
+[tool.pytest.ini_options]
+pythonpath = ["backend"]
+testpaths = ["backend/tests"]

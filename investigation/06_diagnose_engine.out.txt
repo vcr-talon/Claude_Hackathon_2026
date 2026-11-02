@@ -1,0 +1,19 @@
+﻿=== 不正形状の辺の状態 ===
+壁 FW20 0USgiXVB906RqsTp3MP5rE IfcWall tris=32 dupTris=0 edgeUse={2: 45, 1: 6} repr=['Brep']
+壁 EW130 0wLMigPQzFXupf6uOIJ9p4 IfcWall tris=22 dupTris=0 edgeUse={2: 26, 1: 14} repr=['Brep']
+梁 FG10 1FHO2HKVg5xBZ6dE9azvVr IfcBuildingElementProxy tris=14 dupTris=0 edgeUse={2: 18, 1: 6} repr=['Brep']
+梁 W3 3DrRpjMW14rBCM83FFAiF3 IfcBeam tris=74 dupTris=0 edgeUse={2: 107, 1: 8} repr=['Brep']
+壁 W3 3liKn_G694yeGBB1R5rVAB IfcWall tris=198 dupTris=0 edgeUse={2: 292, 1: 10} repr=['Brep']
+
+=== 壁の差＝石膏ボードか（既存NetVolume − 計算 と 石膏ボード子部材の体積）===
+差1%超のうち 石膏ボードで説明できる=305 できない=37
+  残差2.164 壁 W8 2RP6BXBpjFGAf9$Ft8OmnO 計算=2.997 既存=5.907 石膏=0.746
+  残差1.821 壁 W8 2PovjQ_vb0RRyMduDwgH8V 計算=2.428 既存=4.959 石膏=0.710
+  残差1.820 壁 W8 3FxHA1i9vEUOAfgFdJm5rE 計算=2.528 既存=5.051 石膏=0.703
+  残差1.356 壁 W8 1PGVvsyMXDKxE$$2STaC2w 計算=1.877 既存=3.763 石膏=0.530
+  残差1.356 壁 W8 3FRoAkY_5A6xECTAVutE9K 計算=1.877 既存=3.740 石膏=0.507
+  残差1.310 壁 W8 1_QEPI8JX0pfLZuE7hrE74 計算=1.814 既存=3.617 石膏=0.493
+  残差1.260 壁 W8 1qtyI7SO14k8RFbxqr1yGw 計算=2.436 既存=4.381 石膏=0.685
+  残差1.128 壁 W4 24gsd$7H1Fj9iXSbt6Lqza 計算=1.391 既存=2.841 石膏=0.321
+  残差0.685 壁 W1 2JNLkuVQz8VfCnV_1Sq6lB 計算=1.347 既存=2.179 石膏=0.147
+  残差0.676 壁 W4 3NYvi$GZX96Bi$VlXEtFLj 計算=1.476 既存=2.451 石膏=0.299

@@ -1,0 +1,123 @@
+﻿=== placement depth / z vs storey (all elements, no geometry) ===
+IfcColumn                placementZ - storeyElev : top [(0, 160), (-1250, 25), (-80, 15), (-50, 11), (204, 5)]
+IfcBeam                  placementZ - storeyElev : top [(0, 235), (-80, 114), (600, 37), (100, 36), (550, 23)]
+IfcSlab                  placementZ - storeyElev : top [(0, 136), (-80, 32), (-2100, 24), (-50, 19), (-300, 13)]
+IfcWall                  placementZ - storeyElev : top [(0, 114), (-8940, 95), (-3000, 88), (-5970, 87), (-11910, 55)]
+IfcFooting               placementZ - storeyElev : top [(-2700, 27), (-8700, 12), (-2800, 1)]
+IfcStair                 placementZ - storeyElev : top [(100, 2), (-3000, 2), (-5970, 2), (-8940, 2), (-11910, 2)]
+IfcBuildingElementProxy  placementZ - storeyElev : top [(0, 1119), (-80, 55), (-50, 47), (-6500, 30), (-200, 24)]
+
+=== grids ===
+Grid 18g_7fL_iYbRjwg6cFj48H 通り芯-1 container 1SL placement [-12280, 6400, 0]
+   U tag='X8'     sameSense=True curve=[(40730, 29750), (40730, -17300)]
+   V tag='Y2'     sameSense=True curve=[(0, 0), (77950, 0)]
+Grid 3K_AZXurCM45uXIGomgLcq 通り芯-1 container 1SL placement [-12280, 25300, 0]
+   U tag='X5'     sameSense=True curve=[(26580, 8800), (26580, -38200)]
+   U tag='X12'    sameSense=True curve=[(53580, 10850), (53580, -38200)]
+   V tag='X1'     sameSense=True curve=[(12280, 10850), (12280, -38200)]
+   V tag='X3'     sameSense=True curve=[(18780, 8800), (18780, -38200)]
+   V tag='X4'     sameSense=True curve=[(25180, 10850), (25180, -36200)]
+   V tag='X6'     sameSense=True curve=[(33780, 10850), (33780, -36200)]
+   V tag='X9'     sameSense=True curve=[(42180, 8800), (42180, -38200)]
+   V tag='X13'    sameSense=True curve=[(57680, 10850), (57680, -36200)]
+   W tag='X2'     sameSense=True curve=[(16080, 10850), (16080, -36200)]
+   W tag='X7'     sameSense=True curve=[(34380, 8800), (34380, -38200)]
+   W tag='X8'     sameSense=True curve=[(40730, 10850), (40730, -36200)]
+   W tag='X10'    sameSense=True curve=[(47130, 10850), (47130, -36200)]
+   W tag='X11'    sameSense=True curve=[(48130, 8800), (48130, -38200)]
+   W tag='X14'    sameSense=True curve=[(58980, 10850), (58980, -38200)]
+   W tag='X15'    sameSense=True curve=[(63230, 8800), (63230, -38200)]
+   W tag='Y8'     sameSense=True curve=[(0, 0), (77950, 0)]
+   W tag='Y7'     sameSense=True curve=[(0, -1500), (77950, -1500)]
+   W tag='Y6'     sameSense=True curve=[(0, -3300), (77950, -3300)]
+   W tag='Y5'     sameSense=True curve=[(0, -5800), (77950, -5800)]
+   W tag='Y4'     sameSense=True curve=[(0, -11600), (77950, -11600)]
+   W tag='Y3'     sameSense=True curve=[(0, -14600), (77950, -14600)]
+   W tag='Y2'     sameSense=True curve=[(0, -18900), (77950, -18900)]
+   W tag='Y1'     sameSense=True curve=[(0, -25300), (77950, -25300)]
+
+=== representative samples (3 per class) + geometry check ===
+
+######## IfcColumn
+- #14309 GlobalId=0CSp4305958hVhgdJQHWfG Name='1階C4' 階=1SL 材料=コンクリート (1) placementZ=-100
+    Reference=コンクリート 1200 x 800 壁種区分=None 分類=['柱', '柱']
+    BaseQuantities: Length=3100, Width=1200, Depth=800, CrossSectionArea=0.96, OuterSurfaceArea=12.4, TotalSurfaceArea=14.32, GrossSurfaceArea=14.32, GrossVolume=2.976, NetVolume=2.976
+    geom: volume=2.976000000000004 zRange=(np.float64(-0.1000000000000001), np.float64(3.0)) manifold=None
+- #14332 GlobalId=0GQH6rnU9FE9tFHMdnXmw1 Name='WC1' 階=1SL 材料=コンクリート (1) placementZ=-6650
+    Reference=コンクリート 1300 x 450 壁種区分=None 分類=['柱', '柱']
+    BaseQuantities: Length=4050, Width=1300, Depth=450, CrossSectionArea=0.585, OuterSurfaceArea=14.18, TotalSurfaceArea=15.35, GrossSurfaceArea=15.35, GrossVolume=2.369, NetVolume=2.369
+    geom: volume=2.369251643942447 zRange=(np.float64(-6.6499999999999995), np.float64(-2.5999999999999996)) manifold=None
+- #85670 GlobalId=0wPhAwys19hRjJtKmElBYj Name='C9' 階=1SL 材料=None placementZ=0
+    Reference=RC柱-増し打ち 900 x 900 壁種区分=None 分類=['柱']
+    BaseQuantities: Length=2420, CrossSectionArea=0.81, OuterSurfaceArea=7.271, TotalSurfaceArea=8.796, GrossSurfaceArea=8.796, GrossVolume=1.842, NetVolume=1.842
+    children=2 geomVolume by material: コンクリート-増し打ち=0.0997, コンクリート (1)=1.7424
+
+######## IfcBeam
+- #14059 GlobalId=1rrWdGf6X1Xw$JhoSovV70 Name='FG64' 階=GL 材料=コンクリート (1) placementZ=-6650
+    Reference=RC梁-増し打ち 1300 x 2015 壁種区分=None 分類=['梁', '梁']
+    BaseQuantities: NetSurfaceAreaExtrudedSides=11.74, Length=3890, CrossSectionArea=2.619, OuterSurfaceArea=11.74, TotalSurfaceArea=16.98, GrossSurfaceArea=16.98, GrossVolume=10.19, NetSurfaceArea=16.98, NetVolume=5.905
+    geom: volume=5.905249938254371 zRange=(np.float64(-8.649999991279959), np.float64(-6.6499999999999995)) manifold=None
+- #14312 GlobalId=0BSjO2m6nEjPapnYqtkxq8 Name='FG7' 階=1SL 材料=コンクリート (1) placementZ=-400
+    Reference=RC梁-増し打ち 650 x 2200 壁種区分=None 分類=['梁', '梁']
+    BaseQuantities: NetSurfaceAreaExtrudedSides=20.32, Length=3980, CrossSectionArea=1.43, OuterSurfaceArea=20.32, TotalSurfaceArea=23.18, GrossSurfaceArea=23.18, GrossVolume=5.691, NetSurfaceArea=23.18, NetVolume=5.04
+    geom: volume=5.040087948873258 zRange=(np.float64(-2.59999999040805), np.float64(-0.39999999999999997)) manifold=None
+- #82445 GlobalId=0BkXzUR3nAkw0Cdsy9$6xL Name='FG62' 階=GL 材料=None placementZ=0
+    Reference=RC梁-増し打ち 950 x 2015 壁種区分=None 分類=['梁']
+    BaseQuantities: NetSurfaceAreaExtrudedSides=22.97, Length=5000, CrossSectionArea=1.914, OuterSurfaceArea=22.97, TotalSurfaceArea=26.8, GrossSurfaceArea=26.8, GrossVolume=9.571, NetSurfaceArea=26.8, NetVolume=7.078
+    children=2 geomVolume by material: コンクリート-増し打ち=0.0712, コンクリート (1)=7.0063
+
+######## IfcSlab
+- #13702 GlobalId=1pG_7H6OH9pQxSEJch7okv Name='B1階C2' 階=基礎下端 材料=コンクリート (1) placementZ=-200
+    Reference=None 壁種区分=None 分類=['スラブ', 'フロアスラブ']
+    BaseQuantities: Width=50, Perimeter=2200, GrossArea=0.1, NetArea=0.1, GrossVolume=0.005, NetVolume=0.005
+    geom: volume=0.004999999999999302 zRange=(np.float64(-0.19999999999999996), np.float64(-0.15000000000000013)) manifold=None
+- #13736 GlobalId=29fEgv1Cv3GxvPCzpfSenT Name='段差補強' 階=基礎下端 材料=コンクリート (1) placementZ=-350
+    Reference=None 壁種区分=None 分類=['スラブ', 'フロアスラブ']
+    BaseQuantities: Width=250, Perimeter=1430, GrossArea=0.1278, NetArea=0.1278, GrossVolume=0.03194, NetVolume=0.03194
+    geom: volume=0.03193753380726602 zRange=(np.float64(-0.5999999999999999), np.float64(-0.34999999999999987)) manifold=None
+- #81966 GlobalId=03LoK6q_j7pfYGM4fl8lCW Name='PS80' 階=GL 材料=None placementZ=0
+    Reference=None 壁種区分=None 分類=['スラブ']
+    BaseQuantities: Width=815, Perimeter=1.874e+04, GrossArea=12.08, NetArea=12.08, GrossVolume=9.215, NetVolume=9.215
+    children=2 geomVolume by material: コンクリート (1)=9.0341, コンクリート-増し打ち=0.1812
+
+######## IfcWall
+- #13756 GlobalId=09iGvgCJ9FyeFkQPR7r2kb Name='-' 階=GL 材料=コンクリート (1) placementZ=-8100
+    Reference=None 壁種区分=None 分類=['壁', '壁']
+    BaseQuantities: Length=1000, Height=650, Width=900, GrossFootprintArea=0.9, NetFootprintArea=0.9, GrossSideArea=0.65, NetSideArea=0.65, GrossVolume=0.585, NetVolume=0.585
+    geom: volume=0.5849999999999795 zRange=(np.float64(-8.100000000000005), np.float64(-7.450000000000005)) manifold=None
+- #14246 GlobalId=011aI$lcv5vByFOXEAaLiX Name='EW35' 階=1SL 材料=コンクリート (1) placementZ=-6650
+    Reference=None 壁種区分=None 分類=['壁', '壁']
+    BaseQuantities: Length=5202, Height=4350, Width=350, GrossFootprintArea=1.82, NetFootprintArea=1.82, GrossSideArea=22.5, NetSideArea=22.5, GrossVolume=7.877, NetVolume=7.877
+    geom: volume=7.876540000000414 zRange=(np.float64(-6.6499999999999995), np.float64(-2.299999999999999)) manifold=None
+- #82335 GlobalId=03tmZuw5b3NeT8V8B24$1H Name='W5' 階=4SL 材料=None placementZ=0
+    Reference=None 壁種区分=None 分類=['壁']
+    BaseQuantities: Length=1285, Height=2725, Width=310, GrossFootprintArea=0.3737, NetFootprintArea=0.3737, GrossSideArea=3.138, NetSideArea=3.138, GrossVolume=0.9806, NetVolume=0.9806
+    children=2 geomVolume by material: コンクリート (1)=0.5930, 石膏ボード=0.3876
+
+######## IfcFooting
+- #13816 GlobalId=0cvyOtS6P1Lh6wP6DLUDps Name='F2B' 階=GL 材料=コンクリート (1) placementZ=-8850
+    Reference=None 壁種区分=None 分類=['基礎', 'フーチング']
+    BaseQuantities: 
+    geom: volume=9.437999999999985 zRange=(np.float64(-8.850000000000001), np.float64(-6.900000000000001)) manifold=None
+- #13818 GlobalId=11_OUspgHDOOwGMJ9e4vtR Name='F2C' 階=GL 材料=コンクリート (1) placementZ=-8850
+    Reference=None 壁種区分=None 分類=['基礎', 'フーチング']
+    BaseQuantities: 
+    geom: volume=15.287999999999998 zRange=(np.float64(-8.850000000000001), np.float64(-6.900000000000001)) manifold=None
+- #13828 GlobalId=1MRR6jF0f2FvnnO_wBvNZo Name='F2A' 階=GL 材料=コンクリート (1) placementZ=-8850
+    Reference=None 壁種区分=None 分類=['基礎', 'フーチング']
+    BaseQuantities: 
+    geom: volume=9.438000000000066 zRange=(np.float64(-8.850000000000001), np.float64(-6.900000000000001)) manifold=None
+
+######## IfcStair
+- #85703 GlobalId=3KxY5l2_b6NuMDVwNP9mtM Name='K6' 階=1SL 材料=None placementZ=0
+    Reference=None 壁種区分=None 分類=['階段']
+    BaseQuantities: Length=4000, Height=3100, GrossVolume=1.452, NetVolume=1.452
+    children=17 geomVolume by material: コンクリート (1)=1.4520
+- #85710 GlobalId=3npUYIzL95_8rIay1jrAwt Name='K2' 階=1SL 材料=None placementZ=0
+    Reference=None 壁種区分=None 分類=['階段']
+    BaseQuantities: Length=4000, Height=3100, GrossVolume=1.452, NetVolume=1.452
+    children=17 geomVolume by material: コンクリート (1)=1.4520
+- #118264 GlobalId=0iIRTfK5H6qh2wWaXj1B_2 Name='K4' 階=3SL 材料=None placementZ=0
+    Reference=None 壁種区分=None 分類=['階段']
+    BaseQuantities: Length=4000, Height=2970, GrossVolume=1.414, NetVolume=1.414
+    children=17 geomVolume by material: コンクリート (1)=1.4141

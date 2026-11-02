@@ -1,0 +1,83 @@
+:root {
+  --bg: #f5f6f8;
+  --panel: #ffffff;
+  --text: #1f2933;
+  --muted: #6b7785;
+  --line: #d9dee5;
+  --accent: #1565c0;
+  --warn: #c62828;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body {
+  display: grid;
+  grid-template-columns: 320px 1fr 340px;
+  font-family: "Yu Gothic UI", "Meiryo", system-ui, sans-serif;
+  font-size: 14px;
+  color: var(--text);
+  background: var(--bg);
+}
+aside { background: var(--panel); overflow-y: auto; padding: 12px 14px; }
+#sidebar { border-right: 1px solid var(--line); }
+#results { border-left: 1px solid var(--line); }
+h1 { font-size: 18px; margin: 0 0 4px; }
+h2 { font-size: 15px; margin: 0 0 8px; }
+section { border-top: 1px solid var(--line); padding: 12px 0; }
+header { padding-bottom: 10px; }
+.muted { color: var(--muted); font-size: 12px; }
+.hidden { display: none !important; }
+button, select, input { font: inherit; }
+button {
+  border: 1px solid var(--line); background: #fff; border-radius: 6px;
+  padding: 6px 10px; cursor: pointer;
+}
+button:hover { border-color: var(--accent); }
+button.active, button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+select { padding: 4px; border: 1px solid var(--line); border-radius: 6px; }
+input[type=number] { width: 80px; padding: 4px; border: 1px solid var(--line); border-radius: 6px; text-align: right; }
+.row { display: flex; align-items: center; gap: 8px; margin: 6px 0; }
+.range { display: flex; align-items: center; gap: 6px; margin: 6px 0; }
+.range select { flex: 1; }
+.tag { font-size: 12px; background: #eef2f7; border-radius: 4px; padding: 2px 6px; }
+.modes { display: flex; gap: 6px; margin: 6px 0; flex-wrap: wrap; }
+.help { font-size: 12px; background: #fff8e1; border-radius: 6px; padding: 6px 8px; margin: 6px 0; }
+.pending { background: #e3f2fd; border-radius: 6px; padding: 8px; margin: 6px 0; }
+.zonelabels { display: flex; gap: 6px; margin: 6px 0; }
+.zonelabels button { width: 38px; font-weight: bold; }
+.list { list-style: none; padding: 0; margin: 6px 0; }
+.list li { display: flex; align-items: center; justify-content: space-between; padding: 4px 6px;
+  border: 1px solid var(--line); border-radius: 6px; margin-bottom: 4px; }
+.list li span { cursor: pointer; }
+.list li button { padding: 2px 8px; }
+.checks { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; }
+.checks label { display: flex; align-items: center; gap: 4px; }
+.chip { display: inline-block; width: 10px; height: 10px; border-radius: 2px; }
+.filebtn { display: inline-block; margin-top: 6px; padding: 5px 10px; border: 1px solid var(--line);
+  border-radius: 6px; cursor: pointer; font-size: 12px; }
+.filebtn input { display: none; }
+table.mini { border-collapse: collapse; width: 100%; font-size: 12px; margin-top: 6px; }
+table.mini td { padding: 2px 4px; border-bottom: 1px solid #eef0f3; }
+table.mini td.num { text-align: right; font-variant-numeric: tabular-nums; }
+
+#viewport { position: relative; overflow: hidden; }
+#viewport canvas { display: block; }
+.labels { position: absolute; top: 0; left: 0; pointer-events: none; }
+.viewbtns { position: absolute; top: 10px; left: 10px; z-index: 5; display: flex; gap: 6px; }
+.hint { position: absolute; bottom: 10px; left: 10px; z-index: 5; background: rgba(255,255,255,.9);
+  border-radius: 6px; padding: 4px 8px; font-size: 12px; color: var(--muted); }
+.loading { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  background: rgba(245,246,248,.85); font-size: 16px; z-index: 10; }
+.gridtag { width: 26px; height: 26px; border-radius: 50%; border: 1.5px solid #455a64; background: #fff;
+  font-size: 11px; display: flex; align-items: center; justify-content: center; color: #263238; }
+.seedtag { font-size: 28px; font-weight: bold; text-shadow: 0 0 4px #fff, 0 0 4px #fff; }
+.selbox { position: absolute; border: 1px dashed var(--accent); background: rgba(21,101,192,.1);
+  pointer-events: none; z-index: 6; }
+
+.zone { border: 1px solid var(--line); border-radius: 8px; padding: 10px; margin-bottom: 10px; }
+.zone h3 { margin: 0; font-size: 15px; display: flex; align-items: center; gap: 8px; }
+.zone .total { font-size: 28px; font-weight: bold; margin: 4px 0; font-variant-numeric: tabular-nums; }
+.zone .total small { font-size: 14px; font-weight: normal; }
+.warn { color: var(--warn); font-size: 12px; }
+.sum { background: #eef2f7; border-radius: 8px; padding: 10px; margin-bottom: 10px; }
+.sum .total { font-size: 22px; font-weight: bold; }
+details summary { cursor: pointer; font-size: 13px; padding: 8px 0; border-top: 1px solid var(--line); }
