@@ -627,7 +627,12 @@ $('pendingOff').addEventListener('keydown', (ev) => { if (ev.key === 'Enter') co
 window.addEventListener('keydown', (ev) => { if (ev.key === 'Escape') { cancelPending(); if (state.mode !== 'view') setMode(state.mode); } });
 $('boundaryList').addEventListener('click', (ev) => {
   const del = ev.target.dataset.del, edit = ev.target.dataset.edit;
-  if (del !== undefined) { state.boundaries.splice(Number(del), 1); renderBoundaryList(); scheduleCompute(); }
+  if (del !== undefined) {
+    // 範囲の形が変わり名前の対応が崩れるため、工区名は付け直してもらう
+    state.boundaries.splice(Number(del), 1);
+    state.seeds = [];
+    renderBoundaryList(); drawLines(); scheduleCompute();
+  }
   if (edit !== undefined) { if (state.mode !== 'boundary') setMode('boundary'); startPending(state.boundaries[Number(edit)].axis, Number(edit)); }
 });
 $('zoneLabels').addEventListener('click', (ev) => {
