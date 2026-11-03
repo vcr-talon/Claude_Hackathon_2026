@@ -178,9 +178,11 @@ function paint() {
 
 // ---------- 通り芯 ----------
 const axisLines = new Map();
+const axisTags = new Map(); // 通り芯名 → 両端の記号ラベル要素
 function buildGrid() {
   gridGroup.clear();
   axisLines.clear();
+  axisTags.clear();
   for (const a of state.meta.grids) {
     const [x0, y0] = a.start, [x1, y1] = a.end;
     const d = new THREE.Vector2(x1 - x0, y1 - y0).normalize().multiplyScalar(3);
@@ -191,6 +193,7 @@ function buildGrid() {
     line.renderOrder = 5;
     gridGroup.add(line);
     axisLines.set(a.tag, line);
+    axisTags.set(a.tag, []);
     for (const p of [p0, p1]) {
       const div = document.createElement('div');
       div.className = 'gridtag';
@@ -198,21 +201,68 @@ function buildGrid() {
       const label = new CSS2DObject(div);
       label.position.copy(p);
       gridGroup.add(label);
+      axisTags.get(a.tag).push(div);
     }
   }
 }
 
+// 強調中の通り芯：線は太くできないので、画面上で約8pxの帯（板）を重ねる
+const band = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshBasicMaterial({
+  color: 0x1565c0, transparent: true, opacity: 0.35, depthTest: false, side: THREE.DoubleSide,
+}));
+band.renderOrder = 6;
+band.visible = false;
+overlay.add(band);
+let highlightTag = null;
+
 function highlightAxis(tag) {
-  for (const [t, line] of axisLines) line.material.color.set(t === tag ? 0x1565c0 : 0x607d8b);
+  if (tag !== highlightTag) {
+    for (const [t, divs] of axisTags) divs.forEach((d) => d.classList.toggle('active', t === tag));
+    highlightTag = tag;
+  }
+  updateBand();
+}
+
+function updateBand() {
+  const a = highlightTag && state.meta.grids.find((g) => g.tag === highlightTag);
+  band.visible = Boolean(a) && state.view === 'plan';
+  if (!band.visible) return;
+  const [x0, y0] = a.start, [x1, y1] = a.end;
+  band.position.set((x0 + x1) / 2, (y0 + y1) / 2, 0);
+  band.rotation.set(0, 0, Math.atan2(y1 - y0, x1 - x0));
+  band.scale.set(Math.hypot(x1 - x0, y1 - y0) + 6, 8 * worldPerPixel(), 1); // 長さは通り芯の表示（両端3m延長）に合わせる
+}
+
+// 通り芯の法線。保存形式の符号の決まり（X方向の線なら+X、Y方向の線なら+Y が正）に向ける
+function axisNormal(a) {
+  const [x0, y0] = a.start, [x1, y1] = a.end;
+  const dx = x1 - x0, dy = y1 - y0, len = Math.hypot(dx, dy);
+  let nx = dy / len, ny = -dx / len;
+  if ((Math.abs(nx) >= Math.abs(ny) && nx < 0) || (Math.abs(nx) < Math.abs(ny) && ny < 0)) { nx = -nx; ny = -ny; }
+  return [nx, ny];
 }
 
 function offsetAxisLine(a, offsetMm) {
   const off = offsetMm / 1000;
   const [x0, y0] = a.start, [x1, y1] = a.end;
-  const dx = x1 - x0, dy = y1 - y0, len = Math.hypot(dx, dy);
-  let nx = dy / len, ny = -dx / len;
-  if ((Math.abs(nx) >= Math.abs(ny) && nx < 0) || (Math.abs(nx) < Math.abs(ny) && ny < 0)) { nx = -nx; ny = -ny; }
+  const [nx, ny] = axisNormal(a);
   return [[x0 + nx * off, y0 + ny * off], [x1 + nx * off, y1 + ny * off]];
+}
+
+// 「X3通りから X4側 500 mm」：線を出した側で最も近い平行な通り芯の名前
+function boundaryText(b) {
+  if (!b.offset) return `${b.axis}通り`;
+  const a = state.meta.grids.find((g) => g.tag === b.axis);
+  const [nx, ny] = axisNormal(a);
+  const dir = Math.sign(b.offset);
+  let best = null, bestD = Infinity;
+  for (const g of state.meta.grids) {
+    const [gx, gy] = axisNormal(g);
+    if (g.tag === a.tag || Math.abs(nx * gy - ny * gx) > 0.05) continue; // 平行でない通り芯は除く
+    const d = (nx * (g.start[0] - a.start[0]) + ny * (g.start[1] - a.start[1])) * dir;
+    if (d > 1e-6 && d < bestD) { bestD = d; best = g.tag; }
+  }
+  return `${b.axis}通りから ${best ? `${best}側` : '外側'} ${Math.abs(b.offset).toLocaleString('ja-JP')} mm`;
 }
 
 // ---------- 境界線・工区の描画 ----------
@@ -239,7 +289,18 @@ function drawLines() {
   });
   if (state.pending) {
     const axis = state.meta.grids.find((a) => a.tag === state.pending.axis);
-    lineGroup.add(extendedLine(offsetAxisLine(axis, Number($('pendingOff').value) || 0), 0x1565c0, true));
+    const pts = offsetAxisLine(axis, pendingOffset());
+    lineGroup.add(extendedLine(pts, 0x1565c0, true));
+    // 寸法をプレビュー線のカーソル寄りに出す（カーソルがなければ通り芯の中央）
+    const [[px, py], [qx, qy]] = pts, len = Math.hypot(qx - px, qy - py);
+    const c = state.pending.cursor;
+    const t = c ? ((c.x - px) * (qx - px) + (c.y - py) * (qy - py)) / len : len / 2;
+    const div = document.createElement('div');
+    div.className = 'dimtag';
+    div.textContent = Math.abs(Number($('pendingOff').value) || 0).toLocaleString('ja-JP');
+    const label = new CSS2DObject(div);
+    label.position.set(px + (qx - px) * t / len, py + (qy - py) * t / len, 0);
+    lineGroup.add(label);
   }
   for (const s of state.seeds) {
     const div = document.createElement('div');
@@ -291,6 +352,7 @@ function setView(view) {
   planCtl.enabled = view === 'plan';
   perspCtl.enabled = view !== 'plan';
   document.querySelectorAll('button.view').forEach((b) => b.classList.toggle('active', b.dataset.view === view));
+  if (state.meta) updateBand();
   updateHint();
 }
 
@@ -353,7 +415,8 @@ function setMode(mode) {
   $('zoneHelp').classList.toggle('hidden', state.mode !== 'zone');
   $('selectHelp').classList.toggle('hidden', state.mode !== 'select');
   planCtl.mouseButtons.LEFT = state.mode === 'select' ? null : THREE.MOUSE.PAN;
-  highlightAxis(null);
+  if (state.meta) highlightAxis(null);
+  renderer.domElement.style.cursor = '';
   updateHint();
 }
 
@@ -368,20 +431,40 @@ function updateHint() {
   $('hint').textContent = base + extra;
 }
 
+// 複線方式：通り芯をクリック → 寸法（常に正）を入力 → マウスのある側に線を出す
+let lastPendingOff = 0; // 前回入力した寸法を次の初期値にする
 function startPending(axisTag, editIndex = null) {
-  state.pending = { axis: axisTag, editIndex };
+  const prev = editIndex !== null ? state.boundaries[editIndex].offset : null;
+  state.pending = { axis: axisTag, editIndex, side: prev !== null && prev < 0 ? -1 : 1, cursor: null };
   $('pendingAxis').textContent = axisTag;
-  $('pendingOff').value = editIndex !== null ? state.boundaries[editIndex].offset : 0;
+  $('pendingOff').value = prev !== null ? Math.abs(prev) : lastPendingOff;
   $('pending').classList.remove('hidden');
   $('pendingOff').focus();
   $('pendingOff').select();
+  highlightAxis(axisTag);
+  drawLines();
+}
+
+// 側（+1/-1、符号の決まりと同じ向き）を付けた寸法。保存形式の offset そのもの
+function pendingOffset() {
+  return Math.abs(Number($('pendingOff').value) || 0) * state.pending.side;
+}
+
+// カーソルが通り芯のどちら側にあるかで線を出す側を決める
+function updatePendingSide(p) {
+  const axis = state.meta.grids.find((a) => a.tag === state.pending.axis);
+  const [nx, ny] = axisNormal(axis);
+  const s = nx * (p.x - axis.start[0]) + ny * (p.y - axis.start[1]);
+  if (Math.abs(s) > 4 * worldPerPixel()) state.pending.side = Math.sign(s); // 通り芯の真上では直前の側を保つ
+  state.pending.cursor = { x: p.x, y: p.y };
   drawLines();
 }
 
 function confirmPending() {
   if (!state.pending) return;
   const axis = state.meta.grids.find((a) => a.tag === state.pending.axis);
-  const offset = Number($('pendingOff').value) || 0;
+  const offset = pendingOffset() || 0; // -0 を 0 にそろえる
+  lastPendingOff = Math.abs(offset);
   const b = { axis: axis.tag, offset, points: offsetAxisLine(axis, offset) };
   if (state.pending.editIndex !== null) state.boundaries[state.pending.editIndex] = b;
   else state.boundaries.push(b);
@@ -393,12 +476,13 @@ function confirmPending() {
 function cancelPending() {
   state.pending = null;
   $('pending').classList.add('hidden');
+  if (state.meta) highlightAxis(null);
   drawLines();
 }
 
 function renderBoundaryList() {
   $('boundaryList').innerHTML = state.boundaries.map((b, i) =>
-    `<li><span data-edit="${i}" title="クリックで修正">境界${i + 1}：${esc(b.axis)}通り ${b.offset >= 0 ? '+' : ''}${b.offset.toLocaleString('ja-JP')} mm</span>` +
+    `<li><span data-edit="${i}" title="クリックで修正">境界${i + 1}：${esc(boundaryText(b))}</span>` +
     `<button data-del="${i}">削除</button></li>`).join('');
   drawLines();
 }
@@ -439,7 +523,7 @@ function nearestAxis(p) {
     const d = Math.abs(dy * (p.x - x0) - dx * (p.y - y0)) / Math.hypot(dx, dy);
     if (d < bestD) { bestD = d; best = a; }
   }
-  return bestD <= 14 * worldPerPixel() ? best : null;
+  return bestD <= 18 * worldPerPixel() ? best : null;
 }
 function pointInRings(x, y, rings) {
   const inRing = (ring) => {
@@ -457,6 +541,11 @@ const regionOf = (x, y) => state.regions.findIndex((polys) => polys.some((rings)
 function onClick(ev) {
   if (state.mode === 'boundary' && state.view === 'plan') {
     const p = planPoint(ev);
+    if (state.pending) { // 寸法入力中のクリックは「この側で確定」
+      if (p) updatePendingSide(p);
+      confirmPending();
+      return;
+    }
     const axis = p && nearestAxis(p);
     if (axis) startPending(axis.tag);
     return;
@@ -493,9 +582,15 @@ selbox.className = 'selbox hidden';
 viewport.appendChild(selbox);
 renderer.domElement.addEventListener('pointerdown', (ev) => { down = { x: ev.clientX, y: ev.clientY, button: ev.button }; });
 renderer.domElement.addEventListener('pointermove', (ev) => {
-  if (state.mode === 'boundary' && state.view === 'plan' && !state.pending) {
+  if (state.mode === 'boundary' && state.view === 'plan') {
     const p = planPoint(ev);
-    highlightAxis(p ? nearestAxis(p)?.tag : null);
+    if (state.pending) {
+      if (p) updatePendingSide(p);
+    } else {
+      const tag = p ? nearestAxis(p)?.tag ?? null : null;
+      highlightAxis(tag);
+      renderer.domElement.style.cursor = tag ? 'crosshair' : '';
+    }
   }
   if (down && down.button === 0 && state.mode === 'select' && state.view === 'plan') {
     const r = viewport.getBoundingClientRect();
@@ -859,6 +954,7 @@ for (const id of ['upBase', 'lowBase', 'upOff', 'lowOff']) $(id).addEventListene
 document.querySelectorAll('button.mode').forEach((b) => b.addEventListener('click', () => setMode(b.dataset.mode)));
 document.querySelectorAll('button.view').forEach((b) => b.addEventListener('click', () => setView(b.dataset.view)));
 $('fit').addEventListener('click', fit);
+planCtl.addEventListener('change', () => { if (highlightTag) updateBand(); }); // 拡大縮小しても帯の太さを画面上で一定に
 $('pendingOk').addEventListener('click', confirmPending);
 $('pendingCancel').addEventListener('click', cancelPending);
 $('pendingOff').addEventListener('input', drawLines);

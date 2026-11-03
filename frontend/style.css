@@ -71,6 +71,9 @@ table.mini td.num { text-align: right; font-variant-numeric: tabular-nums; }
   background: rgba(245,246,248,.85); font-size: 16px; z-index: 10; }
 .gridtag { width: 26px; height: 26px; border-radius: 50%; border: 1.5px solid #455a64; background: #fff;
   font-size: 11px; display: flex; align-items: center; justify-content: center; color: #263238; }
+.gridtag.active { background: #1565c0; border-color: #1565c0; color: #fff; font-weight: bold; }
+.dimtag { font-size: 13px; font-weight: bold; color: #1565c0; background: rgba(255,255,255,.9);
+  border: 1px solid #1565c0; border-radius: 4px; padding: 0 4px; margin-top: -28px; } /* transform はCSS2DRendererが使うので margin でずらす */
 .seedtag { font-size: 28px; font-weight: bold; text-shadow: 0 0 4px #fff, 0 0 4px #fff; }
 .selbox { position: absolute; border: 1px dashed var(--accent); background: rgba(21,101,192,.1);
   pointer-events: none; z-index: 6; }
