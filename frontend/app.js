@@ -1107,7 +1107,9 @@ function renderResults() {
       '</table></details>';
     if (z.total > 0.0005) {
       const zi = r.zones.indexOf(z);
-      html += `<div class="regrow"><button class="reg primary" data-reg="${zi}">＋ 未登録の ${fmt(z.total)} m³ を打設リストに追加</button>`;
+      html += `<div class="regrow"><button class="reg primary" data-reg="${zi}" title="未登録の ${fmt(z.total)} m³ を追加します">` +
+        // 一部が登録済みのときだけ「未登録分」と添え、全体をもう一度足すと誤解されないようにする（数量はすぐ上に出ている）
+        `＋ ${z.excluded > 0.0005 ? '未登録分を' : ''}打設リストに追加</button>`;
       if (state.units.length) {
         html += `<select data-addto="${zi}"><option value="">打設リストの既存の行にまとめる…</option>` +
           state.units.map((u, i) => `<option value="${i}">区分${i + 1}「${esc(u.name)}」にまとめる</option>`).join('') + '</select>';
