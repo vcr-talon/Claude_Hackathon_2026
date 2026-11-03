@@ -130,6 +130,19 @@ def test_fully_excluded_keys():
     assert fully_excluded_keys(solids, 0, 3, make_excluder([PourUnit("半分", 0, 3, box(-1, -1, 5, 5))])) == ["col1"]
 
 
+def test_material_filter():
+    concrete = box_solid((0, 0, 0), (1, 1, 1), key="c", category="壁", material="コンクリート")
+    board = box_solid((1, 0, 0), (1.1, 1, 1), key="g", category="壁", material="石膏ボード")
+    assert compute([concrete, board], 0, 1, materials={"コンクリート"}).total == pytest.approx(1.0, rel=1e-6)
+    assert compute([concrete, board], 0, 1, materials={"コンクリート", "石膏ボード"}).total == pytest.approx(1.1, rel=1e-6)
+    # 区分の条件も材料で絞る（登録済みの差し引きも同じ材料だけ）
+    part = PourUnit("A", 0, 1, materials={"コンクリート"})
+    assert compute_units([concrete, board], [part]).results[0].total == pytest.approx(1.0, rel=1e-6)
+    cut = make_excluder([part])
+    r = compute([concrete, board], 0, 1, materials={"コンクリート", "石膏ボード"}, exclude=cut)
+    assert r.total == pytest.approx(0.1, rel=1e-6)
+
+
 def test_region_from_rings_keeps_holes():
     outer = [[0, 0], [4, 0], [4, 4], [0, 4], [0, 0]]
     hole = [[1, 1], [3, 1], [3, 3], [1, 3], [1, 1]]

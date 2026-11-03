@@ -178,10 +178,12 @@ def _bbox_overlaps(s: Solid, z0: float, z1: float, region_prep, region_bounds) -
 def compute(solids: list[Solid], z0: float, z1: float, region: BaseGeometry | None = None,
             categories: set[str] | None = None, member_ids: set[str] | None = None,
             category_order: list[str] = CATEGORY_ORDER,
-            exclude: Callable[[Solid], m3.Manifold | None] | None = None) -> Result:
+            exclude: Callable[[Solid], m3.Manifold | None] | None = None,
+            materials: set[str] | None = None) -> Result:
     """打設区分（工区 × 高さ範囲 × 部材の絞り込み）のコンクリート体積を計算する。
 
     region が None の場合は平面方向に制限しない（高さ範囲のみ）。
+    materials は数える材料名（None はすべて）。
     exclude は立体ごとに「差し引く型」を返す関数（登録済みの区分の除外に使う）。
     """
     if z0 > z1:
@@ -191,7 +193,8 @@ def compute(solids: list[Solid], z0: float, z1: float, region: BaseGeometry | No
 
     candidates = [s for s in solids
                   if (categories is None or s.category in categories)
-                  and (member_ids is None or s.member_id in member_ids)]
+                  and (member_ids is None or s.member_id in member_ids)
+                  and (materials is None or s.material in materials)]
     region_prep = prep(region) if region is not None else None
     region_bounds = region.bounds if region is not None else None
     candidates = [s for s in candidates if _bbox_overlaps(s, z0, z1, region_prep, region_bounds)]

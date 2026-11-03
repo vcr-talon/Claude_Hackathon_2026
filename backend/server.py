@@ -60,10 +60,10 @@ def _rings(geom) -> list[list[list[list[float]]]]:
 
 def model_meta(model: Model) -> dict:
     uncomputed = [{"key": s.key, "member_id": s.member_id, "name": s.member_name, "category": s.category,
-                   "reason": s.error, "reference_volume": s.mesh_volume}
+                   "material": s.material, "reason": s.error, "reference_volume": s.mesh_volume}
                   for s in model.solids if s.manifold is None]
     uncomputed += [{"key": s.key, "member_id": s.member_id, "name": s.name, "category": None,
-                    "reason": s.reason, "reference_volume": None} for s in model.skipped]
+                    "material": s.material, "reason": s.reason, "reference_volume": None} for s in model.skipped]
     return {
         "source": Path(model.source).name,
         "schema": model.schema,
@@ -76,7 +76,7 @@ def model_meta(model: Model) -> dict:
         "members": {m.member_id: {"name": m.name, "category": m.category, "storey": m.storey,
                                   "ifc_class": m.ifc_class} for m in model.members.values()},
         "uncomputed": uncomputed,
-        "solid_count": len(model.solids),
+        "solid_count": sum(1 for s in model.solids if s.material in model.default_materials),
     }
 
 
@@ -121,11 +121,17 @@ class PartRequest(BaseModel):
     polygons: list[list[list[tuple[float, float]]]] | None = None
     categories: list[str] | None = None
     member_ids: list[str] | None = None
+    materials: list[str] | None = None  # 省略時はコンクリートの材料（この機能より前に保存した区分もこの扱い）
 
-    def to_part(self, name: str = "") -> PourUnit:
+    def to_part(self, model: Model, name: str = "") -> PourUnit:
         return PourUnit(name, min(self.z0, self.z1), max(self.z0, self.z1), region_from_rings(self.polygons),
                         set(self.categories) if self.categories is not None else None,
-                        set(self.member_ids) if self.member_ids is not None else None)
+                        set(self.member_ids) if self.member_ids is not None else None,
+                        _materials(model, self.materials))
+
+
+def _materials(model: Model, names: list[str] | None) -> set[str]:
+    return set(names) if names is not None else model.default_materials
 
 
 class ComputeRequest(BaseModel):
@@ -135,6 +141,7 @@ class ComputeRequest(BaseModel):
     seeds: list[Seed] = []
     categories: list[str] | None = None
     member_ids: list[str] | None = None
+    materials: list[str] | None = None  # 数える材料（省略時はコンクリートの材料）
     exclude_parts: list[PartRequest] = []  # 登録済みの区分の条件（重なる部分を差し引く）
 
 
@@ -179,7 +186,8 @@ def api_compute(req: ComputeRequest):
         raise HTTPException(400, str(e)) from e
     cats = set(req.categories) if req.categories is not None else None
     ids = set(req.member_ids) if req.member_ids is not None else None
-    exclude = make_excluder([p.to_part() for p in req.exclude_parts])
+    mats = _materials(model, req.materials)
+    exclude = make_excluder([p.to_part(model) for p in req.exclude_parts])
 
     zones: dict = {}
     if regions is not None and req.seeds:
@@ -188,7 +196,8 @@ def api_compute(req: ComputeRequest):
         zones = {"範囲全体": None}
     results, excluded_pieces = [], []
     for label, poly in sorted(zones.items()):
-        r = compute(model.solids, req.z0, req.z1, region=poly, categories=cats, member_ids=ids, exclude=exclude)
+        r = compute(model.solids, req.z0, req.z1, region=poly, categories=cats, member_ids=ids, exclude=exclude,
+                    materials=mats)
         results.append(_result_json(r, label, poly))
         excluded_pieces += r.excluded_pieces
     return {
@@ -215,7 +224,7 @@ class UnitsRequest(BaseModel):
 @app.post("/api/units")
 def api_units(req: UnitsRequest):
     model = get_model()
-    units = [Unit(u.name, [p.to_part(u.name) for p in u.parts]) for u in req.units]
+    units = [Unit(u.name, [p.to_part(model, u.name) for p in u.parts]) for u in req.units]
     res = compute_units(model.solids, units, exclude_registered=req.exclude_registered)
     return {
         "units": [{"name": u.name, "total": r.total, "member_count": len(r.member_ids),

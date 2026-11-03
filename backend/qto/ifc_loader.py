@@ -33,7 +33,7 @@ CATEGORY_BY_CLASS = {
     "IfcStair": "階段",
     "IfcStairFlight": "階段",
 }
-CACHE_VERSION = 1
+CACHE_VERSION = 2  # 2: コンクリート以外の材料の形状も取り出す（数える材料を画面で選べるように）
 
 
 def is_concrete(material_name: str | None) -> bool:
@@ -71,6 +71,7 @@ class Skipped:
     member_id: str
     name: str
     reason: str
+    material: str = ""  # 「A / B」の形の材料名
 
 
 @dataclass
@@ -81,7 +82,7 @@ class Model:
     grids: list[GridAxis]
     members: dict[str, Member]
     solids: list[Solid]
-    materials: dict[str, dict]  # 材料名 → {"count": 件数, "included": 対象か}
+    materials: dict[str, dict]  # 材料名 → {"count": 件数, "included": 初期状態で数えるか}
     skipped: list[Skipped] = field(default_factory=list)  # 形状変換に失敗した対象部材
     load_seconds: float = 0.0
 
@@ -89,6 +90,11 @@ class Model:
     def bounds(self) -> tuple[float, float, float, float]:
         b = np.array([s.bbox for s in self.solids])
         return b[:, 0].min(), b[:, 1].min(), b[:, 3].max(), b[:, 4].max()
+
+    @property
+    def default_materials(self) -> set[str]:
+        """画面で選ばなかったときに数える材料（名前に「コンクリート」を含む単一材料）。"""
+        return {k for k, v in self.materials.items() if v["included"]}
 
 
 def _material_names(product) -> list[str]:
@@ -155,7 +161,8 @@ def _extract(path: Path) -> Model:
         names = _material_names(p)
         key = " / ".join(names) if names else "（材料なし）"
         materials[key] += 1
-        if len(names) == 1 and is_concrete(names[0]):
+        if len(names) == 1:
+            # 材料を画面で選べるよう、コンクリート以外も形状を取り出す（数えるのは選んだ材料だけ）
             targets.append((p, names[0]))
         elif len(names) > 1 and any(is_concrete(n) for n in names):
             # 1つの形状に複数材料：コンクリート部分だけを切り出せないため未計算扱い
@@ -173,7 +180,8 @@ def _extract(path: Path) -> Model:
                                            storey.Name if storey else None, bq)
         if mat is None:
             skipped.append(Skipped(p.GlobalId, mem.GlobalId, mem.Name or "",
-                                   "1つの形状に複数の材料が含まれ、コンクリート部分を切り出せない"))
+                                   "1つの形状に複数の材料が含まれ、コンクリート部分を切り出せない",
+                                   " / ".join(_material_names(p))))
             continue
         meta[p.id()] = (p.GlobalId, mem.GlobalId, mat)
 
@@ -196,9 +204,9 @@ def _extract(path: Path) -> Model:
                 done.add(shape.id)
                 if not it.next():
                     break
-    for pid, (key, member_id, _) in meta.items():
+    for pid, (key, member_id, mat) in meta.items():
         if pid not in done:
-            skipped.append(Skipped(key, member_id, members[member_id].name, "形状変換に失敗"))
+            skipped.append(Skipped(key, member_id, members[member_id].name, "形状変換に失敗", mat))
 
     included = {k: is_concrete(k) and " / " not in k for k in materials}
     return Model(str(path), f.schema, _storeys(f, scale), _grids(f, scale), members, solids,

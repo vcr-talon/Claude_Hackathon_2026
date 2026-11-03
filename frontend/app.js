@@ -24,6 +24,7 @@ const state = {
   seeds: [], // {label, x, y}
   regions: [], // 直近の計算で得た分割範囲 [[外周, 穴...], ...][]
   categories: new Set(),
+  materials: new Set(), // 数える材料（初期値は名前に「コンクリート」を含む材料）
   selected: new Set(),
   selectedOnly: false,
   mode: 'view',
@@ -215,7 +216,8 @@ function paint() {
   const dimOthers = state.selectedOnly && state.selected.size > 0;
   for (const m of meshes) {
     const u = m.userData;
-    m.visible = state.categories.has(u.category) && u.bbox.max.z > state.z0 && u.bbox.min.z < state.z1
+    m.visible = state.categories.has(u.category) && state.materials.has(u.material)
+      && u.bbox.max.z > state.z0 && u.bbox.min.z < state.z1
       && !state.hiddenKeys.has(u.key); // 全部が登録済みの部材は灰色の除外部分だけを見せる
     let color = CAT_COLORS[u.category] ?? CAT_COLORS['その他'];
     let opacity = 1;
@@ -1018,6 +1020,7 @@ async function runCompute() {
     seeds: state.seeds,
     categories: [...state.categories],
     member_ids: state.selectedOnly ? [...state.selected] : null,
+    materials: [...state.materials],
     exclude_parts: state.excludeRegistered ? allParts() : [],
   };
   const res = await fetch('/api/compute', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
@@ -1043,6 +1046,8 @@ function renderResults() {
   const allCats = state.categories.size === state.meta.categories.length;
   const filters = [];
   if (!allCats) filters.push(`部材種別：${[...state.categories].join('・')}`);
+  const mats = customMaterials([...state.materials]);
+  if (mats) filters.push(`材料：${mats.join('・')}`);
   if (state.selectedOnly) filters.push(`選択部材のみ（${state.selected.size}部材）`);
   let html = `<div class="muted">高さ範囲：${esc($('rangeText').textContent)}</div>`;
   if (filters.length) html += `<div class="muted">絞り込み：${esc(filters.join('／'))}</div>`;
@@ -1124,12 +1129,21 @@ function unitContaining(r, z) {
   const same = (p) => Math.abs(p.z0 - r.z0) < 1e-6 && Math.abs(p.z1 - r.z1) < 1e-6
     && JSON.stringify(p.polygons) === JSON.stringify(z.polygons)
     && JSON.stringify(p.categories) === JSON.stringify(allCats ? null : req.categories)
-    && JSON.stringify(p.member_ids) === JSON.stringify(req.member_ids);
+    && JSON.stringify(p.member_ids) === JSON.stringify(req.member_ids)
+    && JSON.stringify(p.materials ?? null) === JSON.stringify(customMaterials(req.materials));
   return state.units.findIndex((u) => u.parts.some(same));
 }
 
 // ---------- 打設区分 ----------
-const partJson = ({ z0, z1, polygons, categories, member_ids }) => ({ z0, z1, polygons, categories, member_ids });
+// materials が null（省略）の条件は、サーバー側で初期の材料（コンクリート）として数える
+const partJson = ({ z0, z1, polygons, categories, member_ids, materials }) => ({ z0, z1, polygons, categories, member_ids, materials });
+
+// 初期の材料と同じなら null（区分名や条件の表示に材料を出さない）。違えば並べ替えた材料名
+const defaultMaterials = () => Object.entries(state.meta.materials).filter(([, v]) => v.included).map(([k]) => k).sort();
+function customMaterials(list) {
+  const sorted = [...list].sort();
+  return JSON.stringify(sorted) === JSON.stringify(defaultMaterials()) ? null : sorted;
+}
 const allParts = () => state.units.flatMap((u) => u.parts.map(partJson));
 
 // target が null なら新しい区分、数値ならその区分に条件を追加する
@@ -1140,6 +1154,7 @@ function registerUnit(zi, target = null) {
     z0: r.z0, z1: r.z1, rangeText: r.rangeText,
     label: z.polygons ? z.label : null, polygons: z.polygons, wholeName: z.polygons ? undefined : wholeName(),
     categories: allCats ? null : req.categories, member_ids: req.member_ids,
+    materials: customMaterials(req.materials),
   };
   pushHistory();
   if (target !== null) {
@@ -1157,7 +1172,8 @@ function registerUnit(zi, target = null) {
 function unitName(parts) {
   const groups = new Map();
   for (const p of parts) {
-    const filters = (p.categories ? `（${p.categories.join('・')}）` : '') + (p.member_ids ? `（選択${p.member_ids.length}部材）` : '');
+    const filters = (p.categories ? `（${p.categories.join('・')}）` : '') + (p.member_ids ? `（選択${p.member_ids.length}部材）` : '')
+      + (p.materials ? `（${p.materials.join('・')}）` : '');
     const key = p.rangeText.split('（')[0] + filters;
     if (!groups.has(key)) groups.set(key, { range: p.rangeText.split('（')[0], filters, labels: new Set(), wholeName: p.wholeName ?? 'フロア全体' });
     if (p.label) groups.get(key).labels.add(p.label);
@@ -1181,7 +1197,8 @@ function onUnitsChanged() {
 }
 
 function partText(p) {
-  const filters = [p.categories ? p.categories.join('・') : null, p.member_ids ? `選択${p.member_ids.length}部材` : null].filter(Boolean);
+  const filters = [p.categories ? p.categories.join('・') : null, p.member_ids ? `選択${p.member_ids.length}部材` : null,
+    p.materials ? `材料：${p.materials.join('・')}` : null].filter(Boolean);
   return `${p.rangeText}　${p.label ? zonesText([p.label]) : p.wholeName ?? 'フロア全体'}${filters.length ? `　絞り込み：${filters.join('／')}` : ''}`;
 }
 
@@ -1305,7 +1322,7 @@ function savePlan() {
     excludeRegistered: state.excludeRegistered,
     range: Object.fromEntries(RANGE_IDS.map((id) => [id, $(id).value])),
     boundaries: state.boundaries, seeds: state.seeds, zoneNames: state.zoneNames,
-    categories: [...state.categories], selected: [...state.selected], selectedOnly: state.selectedOnly,
+    categories: [...state.categories], materials: [...state.materials], selected: [...state.selected], selectedOnly: state.selectedOnly,
     units: state.units,
   };
   const d = new Date(), p = (n) => String(n).padStart(2, '0');
@@ -1336,6 +1353,9 @@ function applyPlan(plan) {
   renderZoneLabels();
   state.categories = new Set(plan.categories.filter((c) => state.meta.categories.includes(c)));
   for (const cb of document.querySelectorAll('#categories input')) cb.checked = state.categories.has(cb.dataset.cat);
+  // 材料を保存していない古いファイルは初期の材料（コンクリート）
+  state.materials = new Set((plan.materials ?? defaultMaterials()).filter((n) => n in state.meta.materials));
+  for (const cb of document.querySelectorAll('#materials input')) cb.checked = state.materials.has(cb.dataset.mat);
   state.selected = new Set(plan.selected.filter((id) => id in state.meta.members));
   state.selectedOnly = plan.selectedOnly;
   $('selectedOnly').checked = plan.selectedOnly;
@@ -1365,10 +1385,16 @@ async function openPlan(file) {
 // ---------- 初期化 ----------
 function renderSidebar() {
   const m = state.meta;
+  const uncomputed = m.uncomputed.filter((u) => m.materials[u.material]?.included || u.material.includes('コンクリート'));
   $('modelInfo').textContent = `${m.source}（${m.schema}）　コンクリート立体 ${m.solid_count} 件` +
-    (m.uncomputed.length ? `　未計算 ${m.uncomputed.length} 件` : '');
-  $('materials').innerHTML = Object.entries(m.materials).map(([name, info]) =>
-    `<tr><td>${info.included ? '✅ 対象' : '— 除外'}</td><td>${esc(name)}</td><td class="num">${info.count}</td></tr>`).join('');
+    (uncomputed.length ? `　未計算 ${uncomputed.length} 件` : '');
+  state.materials = new Set(defaultMaterials());
+  // 複数材料の形状と材料なしは切り分けられないので選べない（コンクリートを含むものは未計算として一覧に出る）
+  $('materials').innerHTML = Object.entries(m.materials).map(([name, info]) => {
+    const selectable = name !== '（材料なし）' && !name.includes(' / ');
+    return `<tr><td>${selectable ? `<input type="checkbox" data-mat="${esc(name)}"${info.included ? ' checked' : ''}>` : '—'}</td>` +
+      `<td>${esc(name)}${selectable ? '' : '<div class="muted">複数材料・材料なしは選べません</div>'}</td><td class="num">${info.count}</td></tr>`;
+  }).join('');
   state.categories = new Set(m.categories);
   $('categories').innerHTML = m.categories.map((c) =>
     `<label><input type="checkbox" data-cat="${esc(c)}" checked><span class="chip" style="background:${hex(CAT_COLORS[c])}"></span>${esc(c)}</label>`).join('');
@@ -1465,6 +1491,13 @@ $('zoneLabels').addEventListener('click', (ev) => {
   updateHint();
 });
 $('zoneLabels').addEventListener('dblclick', (ev) => { if (ev.target.dataset.label) editZoneName(ev.target); });
+$('materials').addEventListener('change', (ev) => {
+  const name = ev.target.dataset.mat;
+  if (name === undefined) return;
+  ev.target.checked ? state.materials.add(name) : state.materials.delete(name);
+  paint();
+  scheduleCompute();
+});
 $('categories').addEventListener('change', (ev) => {
   const c = ev.target.dataset.cat;
   ev.target.checked ? state.categories.add(c) : state.categories.delete(c);
