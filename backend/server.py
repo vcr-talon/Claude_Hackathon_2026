@@ -11,6 +11,7 @@ import shutil
 import sys
 import threading
 import webbrowser
+from datetime import datetime
 from pathlib import Path
 
 import numpy as np
@@ -19,12 +20,14 @@ from fastapi import FastAPI, HTTPException, UploadFile
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from shapely.geometry import MultiPolygon
+from shapely.ops import unary_union
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from qto.geometry import CATEGORY_ORDER, Result, compute  # noqa: E402
 from qto.ifc_loader import Model, load_model  # noqa: E402
 from qto.partition import ZoneSeed, assign_zones, split_regions  # noqa: E402
+from qto.site_export import export_cell, split_cells  # noqa: E402
 from qto.units import (  # noqa: E402
     PourUnit, Unit, compute_units, fully_excluded_keys, make_excluder, region_from_rings,
 )
@@ -250,6 +253,88 @@ def api_units(req: UnitsRequest):
                       "members": [{"member_id": m.member_id, "name": m.member_name, "category": m.category,
                                    "volume": m.volume} for m in o.shared_members]}
                      for o in res.overlaps],
+    }
+
+
+class SiteCellRequest(BaseModel):
+    id: str
+    label: str
+    ring: list[tuple[float, float]]
+
+
+class SiteZone(BaseModel):
+    key: str  # 工区のキー（A〜F）。スパンのIDに付ける
+    name: str  # 表示名（「A」や「1工区」）
+    polygons: list[list[list[tuple[float, float]]]]
+
+
+class ExportSiteRequest(BaseModel):
+    """打設当日のタブレット用データ（docs/site_app_spec.md）。進捗を出せるよう、スパンを分けて送れる。"""
+
+    cells: list[SiteCellRequest]
+    z0: float
+    z1: float
+    categories: list[str] | None = None  # 省略時は全種別
+    materials: list[str] | None = None  # 省略時はコンクリートの材料
+    step: float = 0.05
+    zones: list[SiteZone] | None = None  # 工区で分けているとき：スパンを工区の境界で切る
+    header: bool = True  # False ならスパンの表だけ返す（2回目以降の分割送信）
+    title: str = ""
+    conditions: list[str] = []
+    truck_m3: float = 4.25
+    extra_pct: float = 0.0
+
+
+def _site_cells(cells: list[SiteCellRequest], zones: list[SiteZone] | None):
+    """スパン（工区があれば工区の境界で切ったもの）の (ID, 名前, 外周)。"""
+    return split_cells([(c.id, c.label, c.ring) for c in cells],
+                       [(z.key, z.name, z.polygons) for z in zones] if zones else None)
+
+
+class SplitCellsRequest(BaseModel):
+    cells: list[SiteCellRequest]
+    zones: list[SiteZone]
+
+
+@app.post("/api/split_cells")
+def api_split_cells(req: SplitCellsRequest):
+    """残量モードのスパンを工区割の境界で切る（タブレット用の書き出しと同じ切り方・名前）。"""
+    return [{"id": cid, "label": label, "ring": ring} for cid, label, ring in _site_cells(req.cells, req.zones)]
+
+
+@app.post("/api/export_site")
+def api_export_site(req: ExportSiteRequest):
+    model = get_model()
+    z0, z1 = min(req.z0, req.z1), max(req.z0, req.z1)
+    cats = set(req.categories) if req.categories is not None else {s.category for s in model.solids}
+    mats = _materials(model, req.materials)
+    cells = [export_cell(model.solids, cid, label, ring, z0, z1, cats, mats, req.step)
+             for cid, label, ring in _site_cells(req.cells, req.zones)]
+    uncomputed = {u.key: {"name": u.member_name, "category": u.category, "reason": u.reason}
+                  for c in cells for u in c.uncomputed}
+    out = {
+        "cells": [{"id": c.id, "label": c.label, "ring": c.ring, "from_top": c.from_top, "slab": c.slab,
+                   "slab_bottom_mm": c.slab_bottom_mm, "beam_mid_mm": c.beam_mid_mm, "members": c.members}
+                  for c in cells],
+        "uncomputed": list(uncomputed.values()),
+    }
+    if not req.header:
+        return out
+    region = unary_union([region_from_rings(z.polygons) for z in req.zones]) if req.zones else None
+    total = compute(model.solids, z0, z1, region=region, categories=cats, materials=mats).total
+    footprints = [{"category": s.category, "box": [round(v, 3) for v in (s.bbox[0], s.bbox[1], s.bbox[3], s.bbox[4])]}
+                  for s in model.solids
+                  if s.category in cats and s.material in mats and s.bbox[5] > z0 and s.bbox[2] < z1]
+    return {
+        "format": "ifc-concrete-qto/site", "version": 1,
+        "exported_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+        "source": Path(model.source).name, "title": req.title, "conditions": req.conditions,
+        "z0": z0, "z1": z1, "step": req.step, "total": total,
+        "overlap_note": total - sum(c.from_top[-1] + c.slab for c in cells),  # 全スパンを1回で送ったときの値
+        "truck_m3": req.truck_m3, "extra_pct": req.extra_pct,
+        "storeys": [{"name": s.name, "elevation": s.elevation} for s in model.storeys],
+        "grids": [{"tag": a.tag, "start": a.start, "end": a.end} for a in model.grids],
+        "bounds": model.bounds, "footprints": footprints, **out,
     }
 
 

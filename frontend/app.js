@@ -38,6 +38,7 @@ const state = {
   hiddenKeys: new Set(), // 高さ範囲内がすべて登録済みの立体（表示しない）
   slabSee: true, // 平面表示でスラブを透かす
   zoneNames: {}, // 工区の表示名 {A: '1工区', ...}。内部のキーはA〜Fのまま
+  remainCells: [], // 打設終盤の残りのスパン（打設順）
 };
 
 // 工区の表示名：名前を付けていればその名前、なければ「A」（見出しでは「工区 A」）
@@ -433,6 +434,260 @@ function updateHatch() {
 }
 
 // 工区名モードで、クリックすると名前が付く範囲を選択中の工区色でなぞる
+// ---------- 打設終盤の残量 ----------
+// スパン＝隣り合う通り芯で囲まれたマス。外側の通り芯からモデルの端までの帯（バルコニー等）も1マスにする
+let cells = []; // {id, label, ring}
+const remainGroup = new THREE.Group();
+overlay.add(remainGroup);
+
+function buildCells() {
+  const groups = [];
+  for (const a of state.meta.grids) {
+    const n = axisNormal(a);
+    let g = groups.find((x) => Math.abs(x.n[0] * n[1] - x.n[1] * n[0]) < 0.05);
+    if (!g) groups.push(g = { n, lines: [] });
+    g.lines.push({ o: g.n[0] * a.start[0] + g.n[1] * a.start[1], tag: a.tag });
+  }
+  groups.sort((a, b) => b.lines.length - a.lines.length);
+  cells = [];
+  if (groups.length < 2) return;
+  const [b0, b1, b2, b3] = state.meta.bounds;
+  for (const g of groups.slice(0, 2)) {
+    g.lines.sort((a, b) => a.o - b.o);
+    const os = [[b0, b1], [b2, b1], [b2, b3], [b0, b3]].map(([x, y]) => g.n[0] * x + g.n[1] * y);
+    if (Math.min(...os) < g.lines[0].o - 0.2) g.lines.unshift({ o: Math.min(...os), tag: '端' });
+    if (Math.max(...os) > g.lines.at(-1).o + 0.2) g.lines.push({ o: Math.max(...os), tag: '端' });
+  }
+  const [A, B] = groups;
+  const pt = (a, b) => { // A.n·p = a.o かつ B.n·p = b.o の点
+    const [ax, ay] = A.n, [bx, by] = B.n, det = ax * by - ay * bx;
+    return [(a.o * by - ay * b.o) / det, (ax * b.o - a.o * bx) / det];
+  };
+  for (let i = 0; i + 1 < A.lines.length; i++) {
+    for (let j = 0; j + 1 < B.lines.length; j++) {
+      const [a0, a1, c0, c1] = [A.lines[i], A.lines[i + 1], B.lines[j], B.lines[j + 1]];
+      const p = pt(a0, c0);
+      cells.push({ id: `${i},${j}`, label: `${a0.tag}〜${a1.tag}×${c0.tag}〜${c1.tag}`,
+        ring: [p, pt(a1, c0), pt(a1, c1), pt(a0, c1), p] });
+    }
+  }
+}
+// 残量モードで選ぶスパン。境界線があれば工区割の境界で切った片（タブレット用の書き出しと同じ切り方・名前）
+let spans = [];
+let spansKey = '';
+const cellById = (id) => spans.find((c) => c.id === id);
+const cellAt = (p) => spans.find((c) => pointInRings(p.x, p.y, [c.ring]));
+
+// 工区（名前のない範囲は「未設定」）の境界でスパンを切る。工区割が変わったときだけサーバーに聞く
+async function updateSpans() {
+  let zones = null;
+  if (state.boundaries.length && state.regions.length && state.result) {
+    const named = new Set(state.seeds.map((s) => regionOf(s.x, s.y)));
+    zones = state.result.zones.filter((z) => z.polygons).map((z) => ({ key: z.label, name: zoneName(z.label), polygons: z.polygons }));
+    state.regions.forEach((polys, i) => { if (!named.has(i)) zones.push({ key: `R${i + 1}`, name: '未設定', polygons: polys }); });
+  }
+  const key = JSON.stringify(zones);
+  if (key === spansKey) return;
+  spansKey = key;
+  if (!zones) {
+    spans = cells;
+  } else {
+    const res = await fetch('/api/split_cells', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cells: cells.map(({ id, label, ring }) => ({ id, label, ring })), zones }) });
+    if (!res.ok) { toast(`スパンを工区で分けられません：${await errorDetail(res)}`, 'error'); spans = cells; return; }
+    if (key !== spansKey) return; // 待っている間に工区割が変わった
+    spans = await res.json();
+  }
+  state.remainCells = state.remainCells.filter((id) => cellById(id)); // 切り方が変わって無くなったスパンは外す
+  drawRemain();
+  if (state.mode === 'remain') scheduleRemain();
+}
+
+// 部材の平面の外接箱がスパンに掛かるか。辺で接するだけの部材は数えないよう1cm縮めて判定（サーバーの touches と同じ）
+const TOUCH_INSET = 0.01;
+function rectTouchesRing(x0, y0, x1, y1, ring) {
+  [x0, y0, x1, y1] = [x0 + TOUCH_INSET, y0 + TOUCH_INSET, x1 - TOUCH_INSET, y1 - TOUCH_INSET];
+  if (x0 >= x1 || y0 >= y1) return pointInRings((x0 + x1) / 2, (y0 + y1) / 2, [ring]); // 細い部材は中心で
+  if (ring.some(([x, y]) => x > x0 && x < x1 && y > y0 && y < y1)) return true;
+  const corners = [[x0, y0], [x1, y0], [x1, y1], [x0, y1]];
+  if (corners.some(([x, y]) => pointInRings(x, y, [ring]))) return true;
+  const cross = (a, b, c, d) => { // 線分 ab と cd が交わるか
+    const o = (p, q, r) => Math.sign((q[0] - p[0]) * (r[1] - p[1]) - (q[1] - p[1]) * (r[0] - p[0]));
+    return o(a, b, c) * o(a, b, d) < 0 && o(c, d, a) * o(c, d, b) < 0;
+  };
+  for (let i = 0; i + 1 < ring.length; i++) {
+    for (let k = 0; k < 4; k++) if (cross(ring[i], ring[i + 1], corners[k], corners[(k + 1) % 4])) return true;
+  }
+  return false;
+}
+
+function drawRemain() {
+  remainGroup.clear();
+  if (state.mode !== 'remain') return;
+  state.remainCells.forEach((id, k) => {
+    const c = cellById(id);
+    const fill = new THREE.Mesh(new THREE.ShapeGeometry(ringsShape([c.ring])), new THREE.MeshBasicMaterial({
+      color: 0xfb8c00, transparent: true, opacity: 0.3, depthTest: false, side: THREE.DoubleSide }));
+    fill.renderOrder = 4;
+    const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints(c.ring.map(([x, y]) => new THREE.Vector3(x, y, 0))),
+      new THREE.LineBasicMaterial({ color: 0xe65100, depthTest: false }));
+    line.renderOrder = 8;
+    const div = document.createElement('div');
+    div.className = 'celltag';
+    div.textContent = k + 1; // 打設順
+    const tag = new CSS2DObject(div);
+    const n = c.ring.length - 1;
+    tag.position.set(c.ring.slice(0, n).reduce((s, q) => s + q[0], 0) / n, c.ring.slice(0, n).reduce((s, q) => s + q[1], 0) / n, 0);
+    remainGroup.add(fill, line, tag);
+  });
+}
+
+function toggleCell(p) {
+  const c = cellAt(p);
+  if (!c) return;
+  const i = state.remainCells.indexOf(c.id);
+  if (i >= 0) state.remainCells.splice(i, 1); else state.remainCells.push(c.id);
+  drawRemain();
+  scheduleRemain();
+}
+
+// 残りのスパンの条件：柱・梁など（スラブ以外）は打ち上がり高さ〜上端、スラブは全厚。重なりは1回だけ数える
+function remainParts(ids, depthMm) {
+  const polygons = ids.map((id) => [cellById(id).ring]);
+  const top = state.z1, level = Math.max(state.z0, top - depthMm / 1000);
+  const vertical = [...state.categories].filter((c) => c !== 'スラブ');
+  const materials = customMaterials([...state.materials]);
+  const parts = [];
+  if (vertical.length && top - level > 1e-6) parts.push({ z0: level, z1: top, polygons, categories: vertical, member_ids: null, materials });
+  if (state.categories.has('スラブ')) parts.push({ z0: state.z0, z1: top, polygons, categories: ['スラブ'], member_ids: null, materials });
+  return parts;
+}
+
+async function remainVolume(ids, depthMm) {
+  const parts = remainParts(ids, depthMm);
+  if (!ids.length || !parts.length) return 0;
+  const res = await fetch('/api/units', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ units: [{ name: '残量', parts }], exclude_registered: false }) });
+  if (!res.ok) throw new Error(await errorDetail(res));
+  return (await res.json()).units[0].total;
+}
+
+// 打ち上がり高さの目安：残りのスパン（なければ全体）に掛かる、上端付近のスラブ下端・梁せい中央の中央値
+function presetDepth(kind) {
+  const top = state.z1;
+  if (kind === 'none') return Math.round((top - state.z0) * 1000);
+  const rings = (state.remainCells.length ? state.remainCells.map(cellById) : spans).map((c) => c.ring);
+  const cat = kind === 'slab' ? 'スラブ' : '梁';
+  const ds = [];
+  for (const m of meshes) {
+    const u = m.userData, bb = u.bbox;
+    if (u.category !== cat || !state.materials.has(u.material) || Math.abs(bb.max.z - top) > 0.35) continue;
+    if (!rings.some((r) => rectTouchesRing(bb.min.x, bb.min.y, bb.max.x, bb.max.y, r))) continue;
+    ds.push(kind === 'slab' ? top - bb.min.z : top - (bb.min.z + bb.max.z) / 2);
+  }
+  if (!ds.length) return null;
+  ds.sort((a, b) => a - b);
+  return Math.round(ds[Math.floor(ds.length / 2)] * 100) * 10; // 10mm単位
+}
+
+// 生コン車の台数：割増を含めた量を1台の積載量で割り、端数は最終車の量にする
+function truckPlan(volume) {
+  const cap = Number($('truckM3').value) || 4.25, extra = Number($('extraPct').value) || 0;
+  const need = volume * (1 + extra / 100);
+  let n = Math.floor(need / cap + 1e-9), last = need - n * cap;
+  if (last < 0.005) last = 0;
+  const text = !need ? '—' : !n ? `1台（${fmt(last)} m³）` : last
+    ? `${fmt(cap)} m³ × ${n}台 ＋ 最終車 ${fmt(last)} m³（計 ${n + 1} 台）`
+    : `${fmt(cap)} m³ × ${n}台（計 ${n} 台）`;
+  return { need, extra, text };
+}
+
+let remainTimer = null, remainSeq = 0;
+function scheduleRemain() {
+  clearTimeout(remainTimer);
+  remainTimer = setTimeout(runRemain, 150);
+}
+async function runRemain() {
+  const ids = [...state.remainCells], depth = Number($('remainDepth').value) || 0, seq = ++remainSeq;
+  if (!ids.length) { $('remainResult').innerHTML = '<span class="muted">残りのスパンを選ぶと計算します</span>'; return; }
+  $('remainResult').innerHTML = '<span class="muted">計算中…</span>';
+  try {
+    const v = await remainVolume(ids, depth);
+    if (seq !== remainSeq) return;
+    const t = truckPlan(v);
+    $('remainResult').innerHTML = `<div class="muted">残り ${ids.length} スパン・柱梁は上端から −${depth.toLocaleString('ja-JP')} mm まで打設済み</div>` +
+      `<div class="total">${fmt(v)} m³</div>` + (t.extra ? `<div class="muted">割増 ${t.extra}% 込み ${fmt(t.need)} m³</div>` : '') +
+      `<div class="trucks">${t.text}</div>`;
+  } catch (e) {
+    if (seq === remainSeq) $('remainResult').innerHTML = `<div class="warn">計算できません：${esc(e.message)}</div>`;
+  }
+}
+
+// 早見表：「残りのスパン数（打設順の後ろから）× 打ち上がり高さ」の残量と台数
+async function exportRemainCsv() {
+  const order = [...state.remainCells];
+  if (!order.length) { toast('先に残りのスパンを選んでください', 'error'); return; }
+  const levels = [['未打設（全量）', presetDepth('none')], ['梁せい中央', presetDepth('beam')], ['スラブ下', presetDepth('slab')]]
+    .filter(([, d]) => d !== null);
+  const cur = Number($('remainDepth').value) || 0;
+  if (!levels.some(([, d]) => d === cur)) levels.push(['入力値', cur]);
+  toast('早見表を計算しています…', 'info');
+  const rows = order.map((_, k) => order.slice(k)); // 残り n, n-1, ..., 1 スパン
+  const vols = await Promise.all(rows.flatMap((ids) => levels.map(([, d]) => remainVolume(ids, d))));
+  const head = ['残りのスパン数', '残りのスパン（打設順）'];
+  for (const [name, d] of levels) head.push(`${name}：上端−${d}mm（m3）`, `${name}：生コン車`);
+  const out = [head];
+  rows.forEach((ids, r) => {
+    const row = [ids.length, ids.map((id) => cellById(id).label).join(' → ')];
+    levels.forEach((_, l) => { const v = vols[r * levels.length + l]; row.push(m3(v), truckPlan(v).text); });
+    out.push(row);
+  });
+  out.push([], [`生コン車 ${$('truckM3').value} m³／台・割増 ${$('extraPct').value}%・高さ範囲 ${$('rangeText').textContent}`]);
+  download(`${state.meta.source.replace(/\.ifc$/i, '')}_${stamp()}_残量早見表.csv`, csvBlob(out));
+  toast('早見表を書き出しました', 'ok');
+}
+
+// タブレット用データ：全スパンの「上端からの深さ→体積」の表を計算サーバーで作り、1つのJSONに保存する
+// （docs/site_app_spec.md）。スパンを分けて送り、進捗を出す
+const SITE_BATCH = 10;
+async function exportSite() {
+  if (!cells.length) { toast('通り芯からスパンを作れないため書き出せません', 'error'); return; }
+  const r = state.result;
+  const zones = (r?.zones ?? []).filter((z) => z.polygons)
+    .map((z) => ({ key: z.label, name: zoneName(z.label), polygons: z.polygons }));
+  const range = $('rangeText').textContent.split('（')[0];
+  const conditions = [`高さ範囲：${$('rangeText').textContent}`];
+  if (state.categories.size !== state.meta.categories.length) conditions.push(`数える部材：${[...state.categories].join('・')}`);
+  conditions.push(`数える材料：${[...state.materials].join('・')}`);
+  const base = {
+    z0: state.z0, z1: state.z1, categories: [...state.categories], materials: [...state.materials], step: 0.05,
+    zones: zones.length ? zones : null,
+    title: zones.length ? `${range} ${zonesText(zones.map((z) => z.key).sort())}` : range, conditions,
+    truck_m3: Number($('truckM3').value) || 4.25, extra_pct: Number($('extraPct').value) || 0,
+  };
+  const missing = (r?.zones ?? []).reduce((a, z) => a + z.uncomputed.length, 0);
+  if (missing) toast(`未計算 ${missing} 件は含まれません`, 'error');
+  let data = null;
+  for (let i = 0; i < cells.length; i += SITE_BATCH) {
+    if (!missing || i) toast(`スパン ${i} / ${cells.length} を計算しています…`, 'info');
+    const res = await fetch('/api/export_site', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...base, header: i === 0,
+        cells: cells.slice(i, i + SITE_BATCH).map(({ id, label, ring }) => ({ id, label, ring })) }),
+    });
+    if (!res.ok) throw new Error(await errorDetail(res));
+    const part = await res.json();
+    if (!data) data = part;
+    else { data.cells.push(...part.cells); data.uncomputed.push(...part.uncomputed); }
+  }
+  const sum = data.cells.reduce((a, c) => a + c.from_top.at(-1) + c.slab, 0);
+  data.overlap_note = data.total - sum; // 全スパンを合わせてから差を記録
+  data.uncomputed = [...new Map(data.uncomputed.map((u) => [`${u.name}|${u.category}|${u.reason}`, u])).values()];
+  const name = `${state.meta.source.replace(/\.ifc$/i, '')}_${base.title.replace(/[\s（）()]/g, '')}_現場用_${stamp()}.json`;
+  download(name, new Blob([JSON.stringify(data)], { type: 'application/json' }));
+  toast(`スパン ${data.cells.length} 件・合計 ${fmt(sum)} m³ を書き出しました${missing ? `（未計算 ${missing} 件は含まれません）` : ''}`, 'ok');
+}
+
 const regionHoverGroup = new THREE.Group();
 overlay.add(regionHoverGroup);
 let hoverRegion = -1;
@@ -569,13 +824,17 @@ function setMode(mode) {
   if (needBoundary) next = 'boundary';
   state.mode = next;
   state.guide = null;
-  if ((state.mode === 'boundary' || state.mode === 'zone') && state.view !== 'plan') setView('plan');
+  // 残量モードは入るときだけ平面にする（3Dに切り替えても残りのスパンは立体で見える）
+  if (['boundary', 'zone', 'remain'].includes(state.mode) && state.view !== 'plan') setView('plan');
   if (state.mode !== 'boundary') cancelPending();
   document.querySelectorAll('button.mode').forEach((b) => b.classList.toggle('active', b.dataset.mode === state.mode));
   $('boundaryHelp').classList.toggle('hidden', state.mode !== 'boundary');
   $('zoneLabels').classList.toggle('hidden', state.mode !== 'zone');
   $('zoneHelp').classList.toggle('hidden', state.mode !== 'zone');
   $('selectHelp').classList.toggle('hidden', state.mode !== 'select');
+  $('remainHelp').classList.toggle('hidden', state.mode !== 'remain');
+  $('remainBody').classList.toggle('hidden', state.mode !== 'remain');
+  if (state.meta) { drawRemain(); if (state.mode === 'remain') scheduleRemain(); }
   planCtl.mouseButtons.LEFT = state.mode === 'select' ? null : THREE.MOUSE.PAN;
   if (state.meta) highlightAxis(null);
   renderer.domElement.style.cursor = '';
@@ -589,6 +848,7 @@ function updateHint() {
   const extra = state.guide ? `　｜　${state.guide}` : {
     boundary: '　｜　通り芯をクリックして境界線を作成',
     zone: `　｜　範囲をクリックして工区「${zoneName(state.zoneLabel)}」を付ける`,
+    remain: '　｜　残りのスパンをタップ（打設順。もう一度タップで外す）',
     select: '　｜　部材をクリックで選択',
     view: '　｜　部材をクリックで情報表示',
   }[state.mode];
@@ -878,6 +1138,11 @@ function onClick(ev) {
     if (axis) startPending(axis.tag, null, [p.x, p.y]);
     return;
   }
+  if (state.mode === 'remain') {
+    const p = state.view === 'plan' && planPoint(ev);
+    if (p) toggleCell(p);
+    return;
+  }
   if (state.mode === 'zone' && state.view === 'plan') {
     const p = planPoint(ev);
     if (!p) return;
@@ -1039,6 +1304,8 @@ async function runCompute() {
   paint();
   drawZones();
   renderResults();
+  if (state.mode === 'remain') scheduleRemain(); // 高さ範囲・部材種別・材料の変更を残量にも反映
+  updateSpans().catch((e) => toast(`スパンを工区で分けられません：${e.message}`, 'error'));
 }
 
 function renderResults() {
@@ -1505,6 +1772,10 @@ async function loadModel() {
   renderUnits();
   buildMeshes(await (await fetch('/api/meshes')).json());
   buildGrid();
+  buildCells();
+  spans = cells;
+  spansKey = '';
+  state.remainCells = [];
   renderSidebar();
   renderBoundaryList();
   fillStoreys();
@@ -1622,6 +1893,17 @@ $('unitList').addEventListener('input', (ev) => {
 $('clearSel').addEventListener('click', () => { state.selected.clear(); onSelectionChanged(); });
 $('selectedOnly').addEventListener('change', (ev) => { state.selectedOnly = ev.target.checked; paint(); scheduleCompute(); });
 $('savePlan').addEventListener('click', savePlan);
+for (const id of ['remainDepth', 'truckM3', 'extraPct']) $(id).addEventListener('input', scheduleRemain);
+$('remainBody').addEventListener('click', (ev) => {
+  const kind = ev.target.dataset.preset;
+  if (!kind) return;
+  const d = presetDepth(kind);
+  if (d === null) { toast(`${kind === 'slab' ? 'スラブ' : '梁'}が見つからないため、高さを求められません`, 'error'); return; }
+  $('remainDepth').value = d;
+  scheduleRemain();
+});
+$('exportSite').addEventListener('click', () => exportSite().catch((e) => toast(`タブレット用に書き出せません：${e.message}`, 'error')));
+$('remainCsv').addEventListener('click', () => exportRemainCsv().catch((e) => toast(`早見表を書き出せません：${e.message}`, 'error')));
 $('exportCsv').addEventListener('click', () => exportCsv().catch((e) => toast(`CSVを書き出せません：${e.message}`, 'error')));
 $('planInput').addEventListener('change', (ev) => {
   if (ev.target.files[0]) openPlan(ev.target.files[0]);
