@@ -229,7 +229,16 @@ def api_units(req: UnitsRequest):
     }
 
 
-app.mount("/", StaticFiles(directory=FRONTEND, html=True), name="frontend")
+class NoCacheStaticFiles(StaticFiles):
+    """画面ファイルを毎回サーバーに確認させる（更新後に古い画面が残らないように）。"""
+
+    async def get_response(self, path, scope):
+        response = await super().get_response(path, scope)
+        response.headers["Cache-Control"] = "no-cache"  # 変わっていなければ304で済むので負担は小さい
+        return response
+
+
+app.mount("/", NoCacheStaticFiles(directory=FRONTEND, html=True), name="frontend")
 
 
 def main():
