@@ -47,6 +47,9 @@ button {
 }
 button:hover { border-color: var(--accent); }
 button.active, button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+/* 操作中のモード：部材の色と被らない濃い紺で塗り、終了の仕方を添える */
+button.mode.active { background: #1a237e; border-color: #1a237e; box-shadow: 0 0 0 2px #c5cae9; }
+button.mode.active::after { content: "　✕ 終了"; font-size: 11px; opacity: .85; }
 select { padding: 4px; border: 1px solid var(--line); border-radius: 6px; }
 input[type=number] { width: 80px; padding: 4px; border: 1px solid var(--line); border-radius: 6px; text-align: right; }
 .row { display: flex; align-items: center; gap: 8px; margin: 6px 0; }

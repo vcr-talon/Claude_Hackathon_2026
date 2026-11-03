@@ -340,9 +340,20 @@ function fit() {
   planCtl.target.set(cx, cy, 0);
   planCam.updateProjectionMatrix();
   planCtl.update();
-  const span = Math.max(w, h);
-  perspCam.position.set(cx - span * 0.7, cy - span * 1.3, state.z1 + span * 0.9);
-  perspCtl.target.set(cx, cy, (state.z0 + state.z1) / 2);
+  aimPersp(true);
+}
+
+// 3Dのカメラを今の高さ範囲に向ける。reset でなければ見る向きと距離は保ち、高さだけ合わせる
+function aimPersp(reset = false) {
+  const [x0, y0, x1, y1] = state.meta.bounds;
+  const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2, span = Math.max(x1 - x0, y1 - y0);
+  const zc = (state.z0 + state.z1) / 2;
+  if (reset) {
+    perspCam.position.set(cx - span * 0.7, cy - span * 1.3, state.z1 + span * 0.9);
+  } else {
+    perspCam.position.z += zc - perspCtl.target.z;
+  }
+  perspCtl.target.set(cx, cy, zc);
   perspCtl.update();
 }
 
@@ -353,6 +364,8 @@ function setView(view) {
   perspCtl.enabled = view !== 'plan';
   document.querySelectorAll('button.view').forEach((b) => b.classList.toggle('active', b.dataset.view === view));
   if (state.meta) updateBand();
+  // 境界線・工区名は平面でしか操作できないので、3Dに切り替えたらモードを抜ける
+  if (view !== 'plan' && (state.mode === 'boundary' || state.mode === 'zone')) setMode(state.mode);
   updateHint();
 }
 
@@ -365,13 +378,22 @@ function fillStoreys() {
   for (const id of ['storey', 'upBase', 'lowBase']) {
     $(id).innerHTML = state.meta.storeys.map((s) => `<option>${esc(s.name)}</option>`).join('');
   }
-  $('storey').insertAdjacentHTML('afterbegin', `<option value="${ALL_STOREYS}">モデル全体</option>`);
-  $('storey').value = ALL_STOREYS;
+  $('storey').insertAdjacentHTML('beforeend', `<option value="${ALL_STOREYS}">モデル全体</option>`);
+  // 前回の施工階（同じIFCのとき）→ なければ中央の階
+  const names = state.meta.storeys.map((s) => s.name);
+  let last = null;
+  try { last = localStorage.getItem(storeyKey()); } catch { /* 保存できない環境では使わない */ }
+  $('storey').value = last && (last === ALL_STOREYS || names.includes(last)) ? last : names[Math.ceil(names.length / 2) - 1];
   onStoreyChange();
 }
 
+// 工区割がないときの呼び名（サーバーのラベル「範囲全体」は画面に出さない）
+const wholeName = () => ($('storey').value === ALL_STOREYS ? '建物全体' : 'フロア全体');
+const storeyKey = () => `qto.storey.${state.meta.source}`;
+
 function onStoreyChange() {
   const names = state.meta.storeys.map((s) => s.name);
+  try { localStorage.setItem(storeyKey(), $('storey').value); } catch { /* 同上 */ }
   if ($('storey').value === ALL_STOREYS) {
     // 最下階・最上階からの寸法で、モデル全体の高さを50mm単位で包む
     const [zmin, zmax] = state.meta.z_range, lo = names[0], up = names[names.length - 1];
@@ -398,6 +420,7 @@ function applyRange() {
   clipBottom.constant = -state.z0;
   clipTop.constant = state.z1;
   overlay.position.z = state.z1 + 0.02;
+  aimPersp(); // 3Dのカメラをその階の高さに向ける
   const lowTxt = `${$('lowBase').value}${signed(Number($('lowOff').value) || 0)}`;
   const upTxt = `${$('upBase').value}${signed(Number($('upOff').value) || 0)}`;
   $('rangeText').textContent = `${lowTxt} ～ ${upTxt}（${mm(state.z0)} ～ ${mm(state.z1)} mm）`;
@@ -407,7 +430,12 @@ function applyRange() {
 
 // ---------- モード ----------
 function setMode(mode) {
-  state.mode = state.mode === mode ? 'view' : mode;
+  let next = state.mode === mode ? 'view' : mode; // 同じボタンをもう一度押すと終了
+  const needBoundary = next === 'zone' && !state.boundaries.length;
+  if (needBoundary) next = 'boundary';
+  state.mode = next;
+  state.guide = null;
+  if ((state.mode === 'boundary' || state.mode === 'zone') && state.view !== 'plan') setView('plan');
   if (state.mode !== 'boundary') cancelPending();
   document.querySelectorAll('button.mode').forEach((b) => b.classList.toggle('active', b.dataset.mode === state.mode));
   $('boundaryHelp').classList.toggle('hidden', state.mode !== 'boundary');
@@ -418,17 +446,25 @@ function setMode(mode) {
   if (state.meta) highlightAxis(null);
   renderer.domElement.style.cursor = '';
   updateHint();
+  if (needBoundary) toast('先に境界線を引いてください'); // ヒントの更新より後に出す
 }
 
 function updateHint() {
   const base = state.view === 'plan' ? '左ドラッグ：移動　ホイール：拡大縮小' : '左ドラッグ：回転　右ドラッグ：移動　ホイール：拡大縮小';
-  const extra = {
-    boundary: state.view === 'plan' ? '　｜　通り芯をクリックして境界線を作成' : '　｜　境界線は平面表示で引いてください',
-    zone: state.view === 'plan' ? `　｜　範囲をクリックして工区「${state.zoneLabel}」を付ける` : '　｜　工区名は平面表示で付けてください',
+  const extra = state.guide ? `　｜　${state.guide}` : {
+    boundary: '　｜　通り芯をクリックして境界線を作成',
+    zone: `　｜　範囲をクリックして工区「${state.zoneLabel}」を付ける`,
     select: '　｜　部材をクリックで選択',
     view: '　｜　部材をクリックで情報表示',
   }[state.mode];
   $('hint').textContent = base + extra;
+}
+
+// 次にすることの案内（モードを変えるまで出し続ける）
+function setGuide(text) {
+  if (state.guide === text) return;
+  state.guide = text;
+  updateHint();
 }
 
 // 複線方式：通り芯をクリック → 寸法（常に正）を入力 → マウスのある側に線を出す
@@ -471,6 +507,7 @@ function confirmPending() {
   cancelPending();
   renderBoundaryList();
   scheduleCompute();
+  if (!state.seeds.length) setGuide('線を足すなら次の通り芯をクリック。終わったら「工区名を付ける」へ');
 }
 
 function cancelPending() {
@@ -681,11 +718,13 @@ function renderResults() {
   if (filters.length) html += `<div class="muted">絞り込み：${esc(filters.join('／'))}</div>`;
   const labeled = r.zones.filter((z) => z.polygons);
   if (state.boundaries.length && !labeled.length) {
-    html += '<div class="help">工区名が未設定です。「工区名を付ける」で範囲をクリックしてください（下は範囲全体の数量）</div>';
+    html += `<div class="help">工区名が未設定です。「工区名を付ける」で範囲をクリックしてください（下は${wholeName()}の数量）</div>`;
   } else if (labeled.length) {
     const named = new Set(state.seeds.map((s) => regionOf(s.x, s.y)).filter((i) => i >= 0));
     const unnamed = state.regions.length - named.size;
     if (unnamed > 0) html += `<div class="help">⚠ 工区名が付いていない範囲が ${unnamed} か所あります。その範囲は数量に含まれていません</div>`;
+    // 付け直しがあるのでモードは解除せず、案内だけ出す
+    if (state.mode === 'zone') setGuide(unnamed > 0 ? null : '全部の範囲に名前が付きました。右の計算結果を確認してください');
   }
   // 大きな数字は条件全体の数量（未登録＋登録済み）。登録しても0にならない
   const whole = (z) => z.total + z.excluded;
@@ -698,7 +737,7 @@ function renderResults() {
   }
   for (const z of r.zones) {
     const color = ZONE_COLORS[z.label];
-    html += `<div class="zone"><h3>${color ? `<span class="chip" style="background:${hex(color)}"></span>工区 ` : ''}${esc(z.label)}</h3>`;
+    html += `<div class="zone"><h3>${color ? `<span class="chip" style="background:${hex(color)}"></span>工区 ` : ''}${esc(z.polygons ? z.label : wholeName())}</h3>`;
     html += `<div class="muted">この条件の数量</div><div class="total">${fmt(whole(z))} <small>m³</small></div>`;
     if (z.excluded > 0.0005) {
       html += '<div class="breakdown">' +
@@ -764,7 +803,7 @@ function registerUnit(zi, target = null) {
   const allCats = req.categories.length === state.meta.categories.length;
   const part = {
     z0: r.z0, z1: r.z1, rangeText: r.rangeText,
-    label: z.polygons ? z.label : null, polygons: z.polygons,
+    label: z.polygons ? z.label : null, polygons: z.polygons, wholeName: z.polygons ? undefined : wholeName(),
     categories: allCats ? null : req.categories, member_ids: req.member_ids,
   };
   if (target !== null) {
@@ -784,11 +823,11 @@ function unitName(parts) {
   for (const p of parts) {
     const filters = (p.categories ? `（${p.categories.join('・')}）` : '') + (p.member_ids ? `（選択${p.member_ids.length}部材）` : '');
     const key = p.rangeText.split('（')[0] + filters;
-    if (!groups.has(key)) groups.set(key, { range: p.rangeText.split('（')[0], filters, labels: new Set() });
+    if (!groups.has(key)) groups.set(key, { range: p.rangeText.split('（')[0], filters, labels: new Set(), wholeName: p.wholeName ?? 'フロア全体' });
     if (p.label) groups.get(key).labels.add(p.label);
   }
   return [...groups.values()].map((g) =>
-    g.range + (g.labels.size ? ` ${[...g.labels].sort().join('・')}工区` : '') + g.filters).join(' ＋ ');
+    g.range + (g.labels.size ? ` ${[...g.labels].sort().join('・')}工区` : ` ${g.wholeName}`) + g.filters).join(' ＋ ');
 }
 
 function onUnitsChanged() {
@@ -802,7 +841,7 @@ function onUnitsChanged() {
 
 function partText(p) {
   const filters = [p.categories ? p.categories.join('・') : null, p.member_ids ? `選択${p.member_ids.length}部材` : null].filter(Boolean);
-  return `${p.rangeText}　${p.label ? `工区${p.label}` : '範囲全体'}${filters.length ? `　絞り込み：${filters.join('／')}` : ''}`;
+  return `${p.rangeText}　${p.label ? `工区${p.label}` : p.wholeName ?? 'フロア全体'}${filters.length ? `　絞り込み：${filters.join('／')}` : ''}`;
 }
 
 let unitSeq = 0;
