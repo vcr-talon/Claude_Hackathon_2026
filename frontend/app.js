@@ -108,21 +108,32 @@ let meshes = [];
 const matCache = new Map();
 const edgeMat = new THREE.LineBasicMaterial({ color: 0x37474f, clippingPlanes: clips, transparent: true, opacity: 0.45 });
 
-// 同じ高さで重なる面（梁天端とスラブ上面など）のちらつきを防ぐため、部材の種類で奥行きを少しずつずらす。
-// 数字が小さいほど手前に描く。スラブを最優先にし、スラブ上面と同じ高さかわずかに下の梁・柱の天端は隠す
-// （梁を手前にすると、モデル上1mm未満だけ低い梁天端がスラブを突き抜けて点状に見える）
-const DEPTH_RANK = { スラブ: 1, 柱: 2, 梁: 3, 壁: 4, 階段: 4, 基礎: 4, その他: 4 };
+// 同じ高さで重なる面（梁天端とスラブ上面など）のちらつきを防ぐため、部材の種類ごとに
+// カメラから見た奥行きを実長でずらす（m）。スラブを最も手前にし、スラブ上面と±1.5cm以内で
+// 重なる柱頭・梁天端は必ずスラブに隠れる。モデルには数mm高い梁天端も低い梁天端もあるため、
+// 画面の奥行き精度を単位にするずらし（polygonOffset）では距離や角度によってどちらかで点が出た
+const DEPTH_BIAS = { スラブ: 0, 柱: 0.015, 梁: 0.03, 壁: 0.045, 階段: 0.045, 基礎: 0.045, その他: 0.045 };
+
+// 頂点をカメラからの視線に沿って奥へずらす。視線上を動かすだけなので画面上の位置や形は変わらない
+function applyDepthBias(material, bias) {
+  if (!bias) return material;
+  material.defines = { ...material.defines, DEPTH_BIAS: bias.toFixed(4) };
+  material.onBeforeCompile = (shader) => {
+    shader.vertexShader = shader.vertexShader.replace('#include <project_vertex>', `#include <project_vertex>
+      mvPosition.xyz += (isPerspectiveMatrix(projectionMatrix) ? normalize(mvPosition.xyz) : vec3(0.0, 0.0, -1.0)) * DEPTH_BIAS;
+      gl_Position = projectionMatrix * mvPosition;`);
+  };
+  return material;
+}
 
 // depthWrite=false は透かしたスラブ用：下の部材を隠さず、白い三角のちらつきも出ない
-function surfaceMat(color, opacity = 1, depthWrite = true, rank = 1) {
-  const key = `${color}-${opacity}-${depthWrite}-${rank}`;
+function surfaceMat(color, opacity = 1, depthWrite = true, bias = 0) {
+  const key = `${color}-${opacity}-${depthWrite}-${bias}`;
   if (!matCache.has(key)) {
-    matCache.set(key, new THREE.MeshLambertMaterial({
+    matCache.set(key, applyDepthBias(new THREE.MeshLambertMaterial({
       color, side: THREE.DoubleSide, clippingPlanes: clips, transparent: opacity < 1, opacity, depthWrite,
-      // 浅い角度では面の傾きに比例した量（factor）もずらさないと同じ高さの面が揺れる。
-      // どの部材も奥へずらし（輪郭線が面に隠れないように）、スラブを一番浅くして最も手前に見せる
-      polygonOffset: true, polygonOffsetFactor: rank, polygonOffsetUnits: rank * 4,
-    }));
+      polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1, // 輪郭線を面より手前に見せる
+    }), bias));
   }
   return matCache.get(key);
 }
@@ -185,8 +196,8 @@ function paint() {
     else if (state.selected.has(u.member_id)) color = SELECT_COLOR;
     else if (dimOthers) { color = DIM_COLOR; opacity = 0.35; }
     const seeThrough = u.category === 'スラブ' && seeThroughSlab();
-    const rank = DEPTH_RANK[u.category] ?? 3;
-    m.material = seeThrough ? surfaceMat(color, Math.min(opacity, 0.25), false, rank) : surfaceMat(color, opacity, true, rank);
+    const bias = DEPTH_BIAS[u.category] ?? DEPTH_BIAS['その他'];
+    m.material = seeThrough ? surfaceMat(color, Math.min(opacity, 0.25), false, bias) : surfaceMat(color, opacity, true, bias);
     m.renderOrder = seeThrough ? 2 : 0; // 透明なスラブは他の部材の後に描く
   }
 }
