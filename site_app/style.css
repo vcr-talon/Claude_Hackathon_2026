@@ -1,0 +1,103 @@
+:root {
+  --bg: #f5f6f8;
+  --panel: #ffffff;
+  --text: #1f2933;
+  --muted: #607080;
+  --line: #d9dee5;
+  --accent: #1565c0;
+  --pour: #fb8c00;
+  --done: #455a64;
+  --warn: #c62828;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body {
+  font-family: -apple-system, "Hiragino Sans", "Yu Gothic UI", "Noto Sans JP", system-ui, sans-serif;
+  font-size: 16px; color: var(--text); background: var(--bg);
+  -webkit-text-size-adjust: 100%; overscroll-behavior: none;
+}
+.hidden { display: none !important; }
+.muted { color: var(--muted); }
+.small { font-size: 14px; }
+.error { color: var(--warn); font-weight: bold; }
+
+/* ボタン：手袋でも押せるよう高さ48px以上 */
+.btn, .bigbtn {
+  min-height: 48px; padding: 0 16px; border: 1px solid var(--line); border-radius: 10px;
+  background: #fff; color: var(--text); font: inherit; font-size: 17px; cursor: pointer;
+  -webkit-tap-highlight-color: transparent; touch-action: manipulation;
+}
+.btn:active { background: #e3f2fd; }
+.btn:disabled { opacity: .4; }
+.btn.small { min-height: 44px; font-size: 15px; }
+.bigbtn { display: inline-flex; align-items: center; justify-content: center; min-height: 72px; min-width: 260px;
+  font-size: 22px; font-weight: bold; background: var(--accent); color: #fff; border-color: var(--accent); }
+.bigbtn input { display: none; }
+input[type=number] { font: inherit; font-size: 20px; width: 110px; min-height: 48px; padding: 4px 8px;
+  border: 1px solid var(--line); border-radius: 10px; text-align: right; }
+
+/* 最初の画面 */
+.start { max-width: 640px; margin: 0 auto; padding: 48px 20px; text-align: center; }
+.start h1 { font-size: 30px; margin: 0 0 8px; }
+.lead { color: var(--muted); margin: 0 0 32px; }
+.note { margin-top: 16px; }
+.lastwork { margin: 24px auto 0; padding: 12px 16px; background: #fff3e0; border: 1px solid var(--pour); border-radius: 10px; text-align: left; }
+
+/* 作業画面：上（合計）・中（平面図）・下（入力）の3段。横向きでは入力を右に */
+.work { height: 100dvh; display: grid; grid-template-rows: auto 1fr auto; grid-template-areas: "sum" "plan" "ctl"; }
+@media (orientation: landscape) and (min-width: 700px) {
+  .work { grid-template-columns: 1fr 340px; grid-template-rows: auto 1fr; grid-template-areas: "sum sum" "plan ctl"; }
+  .controls { border-top: none; border-left: 1px solid var(--line); overflow-y: auto; }
+}
+.summary { grid-area: sum; background: #263238; color: #fff; padding: 8px 14px 10px;
+  padding-top: max(8px, env(safe-area-inset-top)); }
+.titlerow { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.title { font-weight: bold; font-size: 17px; }
+.summary .btn { background: #37474f; color: #fff; border-color: #546e7a; }
+.zonetabs { display: flex; gap: 8px; margin-top: 6px; flex-wrap: wrap; }
+.zonetabs .btn { background: #37474f; color: #fff; border-color: #546e7a; min-width: 96px; }
+.zonetabs .btn.active { background: #ffcc80; color: #263238; border-color: #ffcc80; font-weight: bold; }
+.btn.active { background: var(--done); color: #fff; border-color: var(--done); }
+.nums { display: flex; align-items: baseline; gap: 18px; flex-wrap: wrap; margin-top: 4px; }
+.lbl { font-size: 14px; opacity: .8; margin-right: 6px; }
+.num { font-size: 18px; font-variant-numeric: tabular-nums; }
+.restbox { margin-left: auto; }
+.rest { font-size: 38px; font-weight: bold; font-variant-numeric: tabular-nums; color: #ffcc80; }
+.trucks { font-size: 18px; font-weight: bold; color: #ffe0b2; margin-top: 2px; }
+.restinfo { font-size: 15px; opacity: .85; }
+
+.planwrap { grid-area: plan; position: relative; min-height: 0; background: #fafbfc; }
+.plan { width: 100%; height: 100%; display: block; touch-action: none; user-select: none; -webkit-user-select: none; }
+.legend { position: absolute; left: 8px; bottom: 8px; display: flex; gap: 12px; align-items: center; flex-wrap: wrap;
+  background: rgba(255,255,255,.92); border-radius: 8px; padding: 4px 8px; font-size: 14px; }
+.sw { display: inline-block; width: 16px; height: 16px; border: 1px solid #90a4ae; border-radius: 3px; vertical-align: -3px; margin-right: 4px; }
+.sw.todo { background: #fff; } .sw.pouring { background: var(--pour); } .sw.done { background: var(--done); }
+
+/* 平面図の要素（線の太さは拡大しても一定） */
+.grid line { stroke: #90a4ae; stroke-dasharray: 6 4; vector-effect: non-scaling-stroke; }
+.grid circle { fill: #fff; stroke: #455a64; vector-effect: non-scaling-stroke; }
+.grid text { fill: #263238; text-anchor: middle; dominant-baseline: central; }
+.fp { stroke: none; pointer-events: none; }
+.cell { stroke: #78909c; stroke-width: 1; vector-effect: non-scaling-stroke; cursor: pointer; }
+.cell.todo { fill: #fff; fill-opacity: .35; }
+.cell.pouring { fill: var(--pour); fill-opacity: .6; }
+.cell.done { fill: var(--done); fill-opacity: .8; }
+.cell.empty { fill: none; stroke: #cfd8dc; pointer-events: none; }
+.cell.own { stroke: #e65100; stroke-width: 3; }
+.cell.other { fill: #eceff1; fill-opacity: .7; stroke: #cfd8dc; pointer-events: none; } /* 選んでいない工区 */
+.bline { fill: none; stroke: #d50000; stroke-width: 3; vector-effect: non-scaling-stroke; pointer-events: none; }
+.cellnum { fill: #1f2933; font-weight: bold; text-anchor: middle; dominant-baseline: central; pointer-events: none; }
+.cellnum.done { fill: #fff; }
+
+.controls { grid-area: ctl; background: var(--panel); border-top: 1px solid var(--line); padding: 10px 14px;
+  padding-bottom: max(10px, env(safe-area-inset-bottom)); }
+.row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 6px 0; }
+.presets .btn { flex: 1 1 auto; }
+.tools { justify-content: flex-end; }
+
+.sheet { position: fixed; inset: 0; background: rgba(0,0,0,.4); display: flex; align-items: center; justify-content: center; z-index: 20; padding: 16px; }
+.sheetbody { background: #fff; border-radius: 12px; padding: 16px 20px; max-width: 560px; width: 100%; max-height: 80vh; overflow-y: auto; }
+.sheetbody h2 { font-size: 19px; margin: 0 0 8px; }
+.toast { position: fixed; left: 50%; top: 16px; transform: translateX(-50%); z-index: 30; max-width: 90%;
+  background: #263238; color: #fff; border-radius: 10px; padding: 12px 18px; font-size: 16px; box-shadow: 0 2px 10px rgba(0,0,0,.3); }
+.toast.error { background: var(--warn); }

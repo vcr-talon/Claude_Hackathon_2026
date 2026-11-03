@@ -283,6 +283,7 @@ class ExportSiteRequest(BaseModel):
     conditions: list[str] = []
     truck_m3: float = 4.25
     extra_pct: float = 0.0
+    boundaries: list[list[tuple[float, float]]] = []  # 工区割の境界線（平面図に赤で描く）
 
 
 def _site_cells(cells: list[SiteCellRequest], zones: list[SiteZone] | None):
@@ -334,7 +335,9 @@ def api_export_site(req: ExportSiteRequest):
         "truck_m3": req.truck_m3, "extra_pct": req.extra_pct,
         "storeys": [{"name": s.name, "elevation": s.elevation} for s in model.storeys],
         "grids": [{"tag": a.tag, "start": a.start, "end": a.end} for a in model.grids],
-        "bounds": model.bounds, "footprints": footprints, **out,
+        "bounds": model.bounds, "footprints": footprints,
+        "zones": [{"key": z.key, "name": z.name} for z in req.zones or []],  # 工区で切ったときの切り替え用
+        "boundaries": [[list(p) for p in b] for b in req.boundaries], **out,
     }
 
 
@@ -347,6 +350,8 @@ class NoCacheStaticFiles(StaticFiles):
         return response
 
 
+# タブレット用アプリ（本番はGitHub Pagesで配信）。PCのブラウザで試せるよう同じものを /site/ でも出す
+app.mount("/site", NoCacheStaticFiles(directory=ROOT / "site_app", html=True), name="site_app")
 app.mount("/", NoCacheStaticFiles(directory=FRONTEND, html=True), name="frontend")
 
 

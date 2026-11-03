@@ -664,6 +664,7 @@ async function exportSite() {
     zones: zones.length ? zones : null,
     title: zones.length ? `${range} ${zonesText(zones.map((z) => z.key).sort())}` : range, conditions,
     truck_m3: Number($('truckM3').value) || 4.25, extra_pct: Number($('extraPct').value) || 0,
+    boundaries: zones.length ? state.boundaries.map((b) => b.points) : [],
   };
   const missing = (r?.zones ?? []).reduce((a, z) => a + z.uncomputed.length, 0);
   if (missing) toast(`未計算 ${missing} 件は含まれません`, 'error');
