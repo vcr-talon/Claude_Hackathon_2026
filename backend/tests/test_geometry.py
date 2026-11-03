@@ -126,6 +126,19 @@ def test_short_boundary_is_extended_through_model():
     assert len(regions) == 2
 
 
+def test_cranked_boundary_splits_slab():
+    # スラブ面でクランクする打継ぎ：x=4 を上から y=5 まで下り、y=5 を x=6 まで進み、x=6 を下へ抜ける
+    # 画面と同じ形の点列（端の点は角から1m出した向きの点。計算側でモデルの外まで延長する）
+    slab = [box_solid((0, 0, 0), (10, 10, 0.2), category="スラブ")]
+    regions = split_regions((0, 0, 10, 10), [[(4, 6), (4, 5), (6, 5), (6, 4)]])
+    assert len(regions) == 2
+    zones = assign_zones(regions, [ZoneSeed("A", 1, 1), ZoneSeed("B", 9, 9)])
+    a = compute(slab, 0, 1, region=zones["A"]).total
+    b = compute(slab, 0, 1, region=zones["B"]).total
+    assert a == pytest.approx((4 * 5 + 6 * 5) * 0.2, rel=REL)  # 左上 4×5 ＋ 下側 6×5
+    assert a + b == pytest.approx(10 * 10 * 0.2, abs=ABS)
+
+
 def test_self_crossing_boundary_is_rejected():
     with pytest.raises(ValueError):
         split_regions((0, 0, 10, 10), [[(0, 0), (5, 5), (5, 0), (0, 5)]])

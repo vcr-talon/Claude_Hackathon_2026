@@ -319,12 +319,17 @@ function boundaryText(b) {
 }
 
 // ---------- 境界線・工区の描画 ----------
+// 点列の両端の区間を、モデルの外まで延ばして描く（計算側の延長と同じ考え方）
 function extendedLine(points, color, dashed = false) {
   const [b0, b1, b2, b3] = state.meta.bounds;
   const reach = Math.hypot(b2 - b0, b3 - b1);
-  const [p, q] = [points[0], points[points.length - 1]];
-  const d = new THREE.Vector2(q[0] - p[0], q[1] - p[1]).normalize().multiplyScalar(reach);
-  const pts = [new THREE.Vector3(p[0] - d.x, p[1] - d.y, 0), new THREE.Vector3(q[0] + d.x, q[1] + d.y, 0)];
+  const out = (from, to) => {
+    const d = new THREE.Vector2(to[0] - from[0], to[1] - from[1]).normalize().multiplyScalar(reach);
+    return new THREE.Vector3(to[0] + d.x, to[1] + d.y, 0);
+  };
+  const n = points.length;
+  const pts = [out(points[1], points[0]), ...points.slice(1, -1).map(([x, y]) => new THREE.Vector3(x, y, 0)),
+    out(points[n - 2], points[n - 1])];
   const mat = dashed
     ? new THREE.LineDashedMaterial({ color, dashSize: 0.8, gapSize: 0.4, depthTest: false })
     : new THREE.LineBasicMaterial({ color, depthTest: false });
@@ -340,10 +345,11 @@ function drawLines() {
     if (state.pending?.editIndex === i) return;
     lineGroup.add(extendedLine(b.points, 0xd50000));
   });
-  if (state.pending) {
-    const axis = state.meta.grids.find((a) => a.tag === state.pending.axis);
-    const pts = offsetAxisLine(axis, pendingOffset());
-    lineGroup.add(extendedLine(pts, 0x1565c0, true));
+  const legs = state.pending ? pendingLegs() : [];
+  const preview = legs.length && legsPolyline(legs);
+  if (preview) lineGroup.add(extendedLine(preview, 0x1565c0, true));
+  if (state.pending?.axis) {
+    const pts = offsetAxisLine(gridOf(state.pending.axis), pendingOffset());
     // 寸法をプレビュー線のカーソル寄りに出す（カーソルがなければ通り芯の中央）
     const [[px, py], [qx, qy]] = pts, len = Math.hypot(qx - px, qy - py);
     const c = state.pending.cursor;
@@ -595,16 +601,38 @@ function setGuide(text) {
 }
 
 // 複線方式：通り芯をクリック → 寸法（常に正）を入力 → マウスのある側に線を出す
+// 折れ線は「区間」（通り芯＋寸法）をつなぎ、曲がり角は隣り合う区間の線の交点にする。
+// 最初と最後の区間は、通り芯をクリックした位置（pick）の側へ延ばす
 let lastPendingOff = 0; // 前回入力した寸法を次の初期値にする
-function startPending(axisTag, editIndex = null) {
-  const prev = editIndex !== null ? state.boundaries[editIndex].offset : null;
-  state.pending = { axis: axisTag, editIndex, side: prev !== null && prev < 0 ? -1 : 1, cursor: null };
-  $('pendingAxis').textContent = axisTag;
-  $('pendingOff').value = prev !== null ? Math.abs(prev) : lastPendingOff;
+const gridOf = (tag) => state.meta.grids.find((a) => a.tag === tag);
+const boundaryLegs = (b) => [{ axis: b.axis, offset: b.offset }, ...(b.turns ?? [])];
+
+function startPending(axisTag, editIndex = null, pick = null) {
+  let legs = [], cur = null;
+  if (editIndex !== null) { // 修正は最後の区間から。前の区間は「1つ前に戻る」で直す
+    const b = state.boundaries[editIndex], all = boundaryLegs(b);
+    legs = all.slice(0, -1).map((l, k) => ({ ...l, pick: k === 0 ? b.points[0] : null }));
+    cur = all.at(-1);
+    axisTag = cur.axis;
+    pick = all.length > 1 ? b.points.at(-1) : b.points[0];
+  }
+  state.pending = { legs, axis: axisTag, pick, editIndex, side: cur && cur.offset < 0 ? -1 : 1, cursor: null };
+  $('pendingOff').value = cur ? Math.abs(cur.offset) : lastPendingOff;
+  showPendingAxis();
+}
+
+// 寸法入力欄の見出しと「1つ前に戻る」の出し分け。次の通り芯を選ぶ間は寸法欄を隠す
+function showPendingAxis() {
+  const pd = state.pending, choosing = pd.axis === null;
+  $('pendingAxis').textContent = choosing ? '' : pd.axis;
+  $('pendingLegs').textContent = pd.legs.length ? `${pd.legs.map((l) => boundaryText(l)).join(' → ')} → ` : '';
+  $('pendingInput').classList.toggle('hidden', choosing);
+  $('pendingChoose').classList.toggle('hidden', !choosing);
+  $('pendingBack').classList.toggle('hidden', !pd.legs.length);
+  $('pendingTurn').classList.toggle('hidden', choosing);
   $('pending').classList.remove('hidden');
-  $('pendingOff').focus();
-  $('pendingOff').select();
-  highlightAxis(axisTag);
+  if (!choosing) { $('pendingOff').focus(); $('pendingOff').select(); }
+  highlightAxis(pd.axis);
   drawLines();
 }
 
@@ -613,8 +641,80 @@ function pendingOffset() {
   return Math.abs(Number($('pendingOff').value) || 0) * state.pending.side;
 }
 
+// 入力中の区間を含めた全区間
+function pendingLegs() {
+  const pd = state.pending;
+  return pd.axis === null ? pd.legs : [...pd.legs, { axis: pd.axis, offset: pendingOffset() || 0, pick: pd.pick }];
+}
+
+// 区間の並び → 境界線の点列 [延長側の点, 曲がり角..., 延長側の点]。平行な区間が続くと交点がないので null
+function legsPolyline(legs) {
+  const lines = legs.map((l) => offsetAxisLine(gridOf(l.axis), l.offset));
+  if (lines.length === 1) return lines[0];
+  const corners = [];
+  for (let i = 0; i + 1 < lines.length; i++) {
+    const c = lineIntersection(lines[i], lines[i + 1]);
+    if (!c) return null;
+    corners.push(c);
+  }
+  // 端の区間は、角から pick の側へ1m 出した点で向きを表す（両端は計算でモデルの外まで延長される）
+  const end = ([p, q], corner, pick) => {
+    const len = Math.hypot(q[0] - p[0], q[1] - p[1]), ux = (q[0] - p[0]) / len, uy = (q[1] - p[1]) / len;
+    const s = pick ? Math.sign((pick[0] - corner[0]) * ux + (pick[1] - corner[1]) * uy) || 1 : 1;
+    return [corner[0] + ux * s, corner[1] + uy * s];
+  };
+  return [end(lines[0], corners[0], legs[0].pick), ...corners, end(lines.at(-1), corners.at(-1), legs.at(-1).pick)];
+}
+
+function lineIntersection([[x1, y1], [x2, y2]], [[x3, y3], [x4, y4]]) {
+  const d = (x1 - x2) * (y3 - y4) - (y1 - y2) * (x3 - x4);
+  if (Math.abs(d) < 1e-9 * Math.hypot(x1 - x2, y1 - y2) * Math.hypot(x3 - x4, y3 - y4)) return null;
+  const t = ((x1 - x3) * (y3 - y4) - (y1 - y3) * (x3 - x4)) / d;
+  return [x1 + t * (x2 - x1), y1 + t * (y2 - y1)];
+}
+
+// 入力中の区間を固定して、次の通り芯を選ぶ状態にする（Shift+クリック／「ここで折る」）
+function turnPending() {
+  const pd = state.pending;
+  if (!pd || pd.axis === null) return;
+  pd.legs = pendingLegs();
+  lastPendingOff = Math.abs(pd.legs.at(-1).offset);
+  Object.assign(pd, { axis: null, pick: null, side: 1 });
+  $('pendingOff').value = lastPendingOff;
+  showPendingAxis();
+}
+
+// 折れ線の次の区間に使える通り芯（直前の区間と平行なものは交点がないので除く）
+function pickNextAxis(axis, p) {
+  const pd = state.pending;
+  pd.axis = axis.tag;
+  pd.pick = [p.x, p.y];
+  pd.side = 1;
+  showPendingAxis();
+}
+function crossesLastLeg(axis) {
+  const last = state.pending?.legs.at(-1);
+  if (!last) return true;
+  const [ax, ay] = axisNormal(gridOf(last.axis)), [bx, by] = axisNormal(axis);
+  return Math.abs(ax * by - ay * bx) > 0.05;
+}
+
+function backPending() {
+  const pd = state.pending;
+  if (!pd?.legs.length) return;
+  const pts = legsPolyline(pendingLegs()), k = pd.legs.length - 1;
+  const prev = pd.legs.pop();
+  // 最初の区間に戻るときはその pick（延ばす側）をそのまま使う。
+  // 途中の区間に戻るときは、外した区間との角の側へ延ばす（今の形を保つ）
+  const pick = k === 0 || !pts ? prev.pick : pts[k + 1];
+  Object.assign(pd, { axis: prev.axis, pick, side: prev.offset < 0 ? -1 : 1 });
+  $('pendingOff').value = Math.abs(prev.offset);
+  showPendingAxis();
+}
+
 // カーソルが通り芯のどちら側にあるかで線を出す側を決める
 function updatePendingSide(p) {
+  if (state.pending.axis === null) return;
   const axis = state.meta.grids.find((a) => a.tag === state.pending.axis);
   const [nx, ny] = axisNormal(axis);
   const s = nx * (p.x - axis.start[0]) + ny * (p.y - axis.start[1]);
@@ -625,10 +725,14 @@ function updatePendingSide(p) {
 
 function confirmPending() {
   if (!state.pending) return;
-  const axis = state.meta.grids.find((a) => a.tag === state.pending.axis);
-  const offset = pendingOffset() || 0; // -0 を 0 にそろえる
-  lastPendingOff = Math.abs(offset);
-  const b = { axis: axis.tag, offset, points: offsetAxisLine(axis, offset) };
+  const legs = pendingLegs(); // 次の通り芯を選ぶ前に確定したら、そこまでの区間で終える
+  if (!legs.length) { cancelPending(); return; }
+  const points = legsPolyline(legs);
+  if (!points) { toast('平行な通り芯どうしはつなげません', 'error'); return; }
+  lastPendingOff = Math.abs(legs.at(-1).offset);
+  const [first, ...turns] = legs.map(({ axis, offset }) => ({ axis, offset }));
+  const b = { ...first, points };
+  if (turns.length) b.turns = turns; // 折れ線のときだけ持つ（直線は今までの形のまま）
   pushHistory();
   if (state.pending.editIndex !== null) state.boundaries[state.pending.editIndex] = b;
   else state.boundaries.push(b);
@@ -647,7 +751,7 @@ function cancelPending() {
 
 function renderBoundaryList() {
   $('boundaryList').innerHTML = state.boundaries.map((b, i) =>
-    `<li><span data-edit="${i}" title="クリックで修正">境界${i + 1}：${esc(boundaryText(b))}</span>` +
+    `<li><span data-edit="${i}" title="クリックで修正">境界${i + 1}：${esc(boundaryLegs(b).map(boundaryText).join(' → '))}</span>` +
     `<button data-del="${i}">削除</button></li>`).join('');
   drawLines();
 }
@@ -731,9 +835,10 @@ function pickMember(ev) {
 function worldPerPixel() {
   return (planCam.top - planCam.bottom) / planCam.zoom / viewport.clientHeight;
 }
-function nearestAxis(p) {
+function nearestAxis(p, usable = () => true) {
   let best = null, bestD = Infinity;
   for (const a of state.meta.grids) {
+    if (!usable(a)) continue;
     const [x0, y0] = a.start, [x1, y1] = a.end;
     const dx = x1 - x0, dy = y1 - y0;
     const d = Math.abs(dy * (p.x - x0) - dx * (p.y - y0)) / Math.hypot(dx, dy);
@@ -757,13 +862,18 @@ const regionOf = (x, y) => state.regions.findIndex((polys) => polys.some((rings)
 function onClick(ev) {
   if (state.mode === 'boundary' && state.view === 'plan') {
     const p = planPoint(ev);
-    if (state.pending) { // 寸法入力中のクリックは「この側で確定」
+    if (state.pending?.axis === null) { // 折れ線の次の通り芯を選ぶ
+      const axis = p && nearestAxis(p, crossesLastLeg);
+      if (axis) pickNextAxis(axis, p);
+      return;
+    }
+    if (state.pending) { // 寸法入力中のクリックは「この側で確定」、Shift+クリックは「ここで折る」
       if (p) updatePendingSide(p);
-      confirmPending();
+      ev.shiftKey ? turnPending() : confirmPending();
       return;
     }
     const axis = p && nearestAxis(p);
-    if (axis) startPending(axis.tag);
+    if (axis) startPending(axis.tag, null, [p.x, p.y]);
     return;
   }
   if (state.mode === 'zone' && state.view === 'plan') {
@@ -804,10 +914,10 @@ renderer.domElement.addEventListener('pointerdown', (ev) => { down = { x: ev.cli
 renderer.domElement.addEventListener('pointermove', (ev) => {
   if (state.mode === 'boundary' && state.view === 'plan') {
     const p = planPoint(ev);
-    if (state.pending) {
+    if (state.pending?.axis) {
       if (p) updatePendingSide(p);
     } else {
-      const tag = p ? nearestAxis(p)?.tag ?? null : null;
+      const tag = p ? nearestAxis(p, state.pending ? crossesLastLeg : undefined)?.tag ?? null : null;
       highlightAxis(tag);
       renderer.domElement.style.cursor = tag ? 'crosshair' : '';
     }
@@ -859,7 +969,10 @@ function onSelectionChanged() {
 async function errorDetail(res) {
   try {
     const d = (await res.json()).detail;
-    return typeof d === 'string' ? d : `入力の形式が正しくありません（${res.status}）`;
+    if (typeof d === 'string') return d;
+    // 入力チェックの誤りは、どの項目かを添える（原因を追えるように）
+    const where = Array.isArray(d) && d[0]?.loc ? `：${d[0].loc.slice(1).join('.')} ${d[0].msg ?? ''}` : '';
+    return `入力の形式が正しくありません（${res.status}${where}）`;
   } catch {
     return `サーバーの応答が正しくありません（${res.status}）`;
   }
@@ -1211,7 +1324,7 @@ function applyPlan(plan) {
   const missing = ['storey', 'upBase', 'lowBase'].map((id) => plan.range[id]).filter((n) => n !== ALL_STOREYS && !storeys.has(n));
   if (missing.length) throw new Error(`開いているIFCに無い階があります（${[...new Set(missing)].join('、')}）`);
   const tags = new Set(state.meta.grids.map((a) => a.tag));
-  const lost = plan.boundaries.filter((b) => !tags.has(b.axis)).map((b) => b.axis);
+  const lost = plan.boundaries.flatMap(boundaryLegs).map((l) => l.axis).filter((t) => !tags.has(t));
   if (lost.length) throw new Error(`開いているIFCに無い通り芯があります（${[...new Set(lost)].join('、')}）`);
 
   cancelPending();
@@ -1317,6 +1430,8 @@ perspCtl.addEventListener('change', hideTip);
 $('toast').addEventListener('click', () => $('toast').classList.add('hidden'));
 $('pendingOk').addEventListener('click', confirmPending);
 $('pendingCancel').addEventListener('click', cancelPending);
+$('pendingTurn').addEventListener('click', turnPending);
+$('pendingBack').addEventListener('click', backPending);
 $('pendingOff').addEventListener('input', drawLines);
 $('pendingOff').addEventListener('keydown', (ev) => { if (ev.key === 'Enter') confirmPending(); });
 window.addEventListener('keydown', (ev) => { if (ev.key === 'Escape') { cancelPending(); if (state.mode !== 'view') setMode(state.mode); } });

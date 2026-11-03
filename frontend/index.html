@@ -44,12 +44,20 @@
       </div>
       <div id="boundaryHelp" class="help hidden">通り芯をクリック → 寸法を入力 → 線を出す側でクリック</div>
       <div id="pending" class="pending hidden">
-        <div class="range">
-          <span><b id="pendingAxis"></b>通りから</span>
-          <input id="pendingOff" type="number" step="50" min="0" value="0"><span>mm</span>
-          <button id="pendingOk" class="primary">確定</button><button id="pendingCancel">取消</button>
+        <div id="pendingLegs" class="muted"></div>
+        <div id="pendingInput">
+          <div class="range">
+            <span><b id="pendingAxis"></b>通りから</span>
+            <input id="pendingOff" type="number" step="50" min="0" value="0"><span>mm</span>
+          </div>
+          <div class="muted">平面図で線を出す側にマウスを向けてクリック（Enterでも確定、Escで取消）。
+            クランクさせるときはShift+クリックか「ここで折る」</div>
         </div>
-        <div class="muted">平面図で線を出す側にマウスを向けてクリック（Enterでも確定、Escで取消）</div>
+        <div id="pendingChoose" class="muted hidden">次の通り芯をクリック（今の線と交わる通り芯）。ここで終えるなら「確定」</div>
+        <div class="row">
+          <button id="pendingOk" class="primary">確定</button><button id="pendingTurn">ここで折る</button>
+          <button id="pendingBack" class="hidden">1つ前に戻る</button><button id="pendingCancel">取消</button>
+        </div>
       </div>
       <div id="zoneLabels" class="zonelabels hidden"></div>
       <div id="zoneHelp" class="help hidden">工区名を選び、平面図の範囲をクリック（同じ範囲を再クリックで解除）。ボタンをダブルクリックで名前を変更（例：1工区、東側）</div>

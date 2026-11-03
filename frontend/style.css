@@ -59,6 +59,8 @@ input[type=number] { width: 80px; padding: 4px; border: 1px solid var(--line); b
 .modes { display: flex; gap: 6px; margin: 6px 0; flex-wrap: wrap; }
 .help { font-size: 12px; background: #fff8e1; border-radius: 6px; padding: 6px 8px; margin: 6px 0; }
 .pending { background: #e3f2fd; border-radius: 6px; padding: 8px; margin: 6px 0; }
+.pending .row { flex-wrap: wrap; gap: 4px; }
+.pending .row button { padding: 4px 8px; white-space: nowrap; }
 .zonelabels { display: flex; gap: 6px; margin: 6px 0; flex-wrap: wrap; }
 .zonelabels button { min-width: 38px; font-weight: bold; }
 .zonelabels input.zonename { width: 80px; padding: 4px; border: 1px solid var(--accent); border-radius: 6px; }
