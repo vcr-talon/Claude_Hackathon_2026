@@ -877,9 +877,10 @@ function renderUnitSummary() {
   $('unitSummary').innerHTML = html;
 }
 
-// リストの行にマウスを乗せると、その区分の範囲を平面図で縁取る
+// リストの行にマウスを乗せると、その区分の範囲を「工区の形 × 高さ範囲」の箱で示す
+// （平面図では縁取り、3Dでは立体に見える。今の高さ範囲の外にある条件も見えるよう切断しない）
 const hoverGroup = new THREE.Group();
-overlay.add(hoverGroup);
+scene.add(hoverGroup);
 let hoverUnit = null;
 function showUnitOutline(i) {
   if (i === hoverUnit) return;
@@ -893,17 +894,17 @@ function showUnitOutline(i) {
     for (const rings of p.polygons ?? whole) {
       const shape = new THREE.Shape(rings[0].map(([x, y]) => new THREE.Vector2(x, y)));
       shape.holes = rings.slice(1).map((r) => new THREE.Path(r.map(([x, y]) => new THREE.Vector2(x, y))));
-      const fill = new THREE.Mesh(new THREE.ShapeGeometry(shape), new THREE.MeshBasicMaterial({
-        color, transparent: true, opacity: 0.22, depthTest: false, side: THREE.DoubleSide,
+      const geom = new THREE.ExtrudeGeometry(shape, { depth: p.z1 - p.z0, bevelEnabled: false });
+      const box = new THREE.Mesh(geom, new THREE.MeshBasicMaterial({
+        color, transparent: true, opacity: 0.2, depthWrite: false, side: THREE.DoubleSide,
       }));
-      fill.renderOrder = 7;
-      hoverGroup.add(fill);
-      for (const ring of rings) {
-        const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints(ring.map(([x, y]) => new THREE.Vector3(x, y, 0))),
-          new THREE.LineBasicMaterial({ color, depthTest: false }));
-        line.renderOrder = 10;
-        hoverGroup.add(line);
-      }
+      box.position.z = p.z0;
+      box.renderOrder = 7;
+      const edges = new THREE.LineSegments(new THREE.EdgesGeometry(geom, 25),
+        new THREE.LineBasicMaterial({ color, depthTest: false })); // 部材に隠れても輪郭は見せる
+      edges.renderOrder = 10;
+      box.add(edges);
+      hoverGroup.add(box);
     }
   }
 }
