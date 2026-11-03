@@ -67,14 +67,6 @@
       <div id="selInfo" class="muted"></div>
     </section>
 
-    <section>
-      <h2>4. 打設区分</h2>
-      <div id="unitHelp" class="help">計算結果の「新しい区分として登録」で、今の条件（高さ範囲・工区・絞り込み）を区分として登録します。上階のパラペットなどは「既存の区分に追加」で同じ区分にまとめられます</div>
-      <label class="row"><input type="checkbox" id="excludeRegistered" checked> 登録済みの部分を除いて計算（二重拾い防止）</label>
-      <ul id="unitList" class="list units"></ul>
-      <div id="unitSummary"></div>
-    </section>
-
     <details>
       <summary>材料の判定（対象／除外）</summary>
       <table id="materials" class="mini"></table>
@@ -92,8 +84,17 @@
   </main>
 
   <aside id="results">
-    <h2>計算結果</h2>
-    <div id="resultBody" class="muted">高さ範囲を選ぶと計算します</div>
+    <div class="pane-top">
+      <h2>いまの条件の数量</h2>
+      <div id="resultBody" class="muted">高さ範囲を選ぶと計算します</div>
+    </div>
+    <div class="pane-bottom">
+      <div class="listhead"><h2>打設リスト</h2><div id="listTotal"></div></div>
+      <div id="unitHelp" class="help">上の「打設リストに追加」で、いまの条件の数量をここに積み上げます。上階のパラペットなどは、既存の行に追加して同じ打設にまとめられます</div>
+      <ul id="unitList" class="list units"></ul>
+      <div id="unitSummary"></div>
+      <label class="row"><input type="checkbox" id="excludeRegistered" checked> リストに入った部分は灰色にして数えない（二重拾い防止）</label>
+    </div>
   </aside>
 
   <script type="module" src="app.js"></script>

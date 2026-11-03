@@ -687,16 +687,25 @@ function renderResults() {
     const unnamed = state.regions.length - named.size;
     if (unnamed > 0) html += `<div class="help">⚠ 工区名が付いていない範囲が ${unnamed} か所あります。その範囲は数量に含まれていません</div>`;
   }
+  // 大きな数字は条件全体の数量（未登録＋登録済み）。登録しても0にならない
+  const whole = (z) => z.total + z.excluded;
   if (r.zones.length > 1) {
-    const sum = r.zones.reduce((a, z) => a + z.total, 0);
+    const sum = r.zones.reduce((a, z) => a + whole(z), 0);
+    const open = r.zones.reduce((a, z) => a + z.total, 0);
     html += `<div class="sum">工区合計 <div class="total">${fmt(sum)} m³</div>` +
-      `<div class="muted">${r.zones.map((z) => `${esc(z.label)} ${fmt(z.total)}`).join(' ＋ ')}</div></div>`;
+      `<div class="muted">${r.zones.map((z) => `${esc(z.label)} ${fmt(whole(z))}`).join(' ＋ ')}` +
+      `${open < sum - 0.0005 ? `　（未登録 ${fmt(open)}）` : ''}</div></div>`;
   }
   for (const z of r.zones) {
     const color = ZONE_COLORS[z.label];
     html += `<div class="zone"><h3>${color ? `<span class="chip" style="background:${hex(color)}"></span>工区 ` : ''}${esc(z.label)}</h3>`;
-    html += `<div class="total">${fmt(z.total)} <small>m³</small></div>`;
-    if (z.excluded > 0.0005) html += `<div class="excluded">登録済みの区分と重なる ${fmt(z.excluded)} m³ を除外（灰色表示）</div>`;
+    html += `<div class="muted">この条件の数量</div><div class="total">${fmt(whole(z))} <small>m³</small></div>`;
+    if (z.excluded > 0.0005) {
+      html += '<div class="breakdown">' +
+        `<span class="done">うち打設リストに登録済み（灰色表示）</span><span class="num done">${fmt(z.excluded)} m³</span>` +
+        `<span class="open">未登録（追加できる分）</span><span class="num open">${fmt(z.total)} m³</span></div>`;
+    }
+    if (z.total > 0.0005) html += `<div class="muted">${z.excluded > 0.0005 ? '未登録分の内訳' : '内訳'}</div>`;
     html += '<table class="mini">';
     for (const [cat, v] of Object.entries(z.by_category)) {
       if (v < 0.0005) continue;
@@ -716,19 +725,33 @@ function renderResults() {
     html += `<details><summary>対象部材の一覧</summary><table class="mini">` +
       z.members.slice(0, 300).map((m) => `<tr><td>${esc(m.category)}</td><td>${esc(m.name)}</td><td class="num">${fmt(m.volume, 3)}</td></tr>`).join('') +
       '</table><div class="muted">部材ごとの値は範囲内に切り取った体積（重複控除前）</div></details>';
-    if (z.total > 0) {
+    if (z.total > 0.0005) {
       const zi = r.zones.indexOf(z);
-      html += `<div class="regrow"><button class="reg" data-reg="${zi}">＋ 新しい区分として登録</button>`;
+      html += `<div class="regrow"><button class="reg primary" data-reg="${zi}">＋ 未登録の ${fmt(z.total)} m³ を打設リストに追加</button>`;
       if (state.units.length) {
         html += `<select data-addto="${zi}"><option value="">既存の区分に追加…</option>` +
           state.units.map((u, i) => `<option value="${i}">区分${i + 1}「${esc(u.name)}」に追加</option>`).join('') + '</select>';
       }
       html += '</div>';
+    } else if (z.excluded > 0.0005) {
+      const ui = unitContaining(r, z);
+      html += `<div class="alldone">✓ この条件はすべて打設リストに入っています${ui >= 0 ? `（区分${ui + 1}「${esc(state.units[ui].name)}」）` : ''}</div>`;
     }
     html += '</div>';
   }
   html += '<div class="muted">内訳は「柱→梁→壁→スラブ→基礎→階段→その他」の順で重なりを配分した参考値です。総数量は重複を除いた体積です。</div>';
   $('resultBody').innerHTML = html;
+}
+
+// いまの条件と同じ条件（高さ範囲・工区の形・絞り込み）を持つ区分の番号。なければ -1
+function unitContaining(r, z) {
+  const req = r.request;
+  const allCats = req.categories.length === state.meta.categories.length;
+  const same = (p) => Math.abs(p.z0 - r.z0) < 1e-6 && Math.abs(p.z1 - r.z1) < 1e-6
+    && JSON.stringify(p.polygons) === JSON.stringify(z.polygons)
+    && JSON.stringify(p.categories) === JSON.stringify(allCats ? null : req.categories)
+    && JSON.stringify(p.member_ids) === JSON.stringify(req.member_ids);
+  return state.units.findIndex((u) => u.parts.some(same));
 }
 
 // ---------- 打設区分 ----------
@@ -751,6 +774,7 @@ function registerUnit(zi, target = null) {
   } else {
     state.units.push({ name: unitName([part]), parts: [part], autoName: true });
   }
+  state.flash = { index: target ?? state.units.length - 1, at: Date.now() };
   onUnitsChanged();
 }
 
@@ -768,6 +792,7 @@ function unitName(parts) {
 }
 
 function onUnitsChanged() {
+  showUnitOutline(null); // 行の番号がずれるので縁取りを消す
   state.unitResult = null;
   renderUnits();
   runUnits();
@@ -804,7 +829,10 @@ function renderUnits() {
     const label = u.parts.find((p) => p.label)?.label;
     const parts = u.parts.map((p, k) => `<div class="part muted">${u.parts.length > 1 ? `${k + 1}. ` : ''}${esc(partText(p))}` +
       `${u.parts.length > 1 ? ` <button class="x" data-pdel="${i}:${k}" title="この条件を外す">×</button>` : ''}</div>`).join('');
-    return `<li class="${overlapping.has(i) ? 'overlap' : ''}"><div class="unitrow">` +
+    // 追加した行を光らせる。再描画されても光り始めからの経過時間を引き継ぐ
+    const flash = state.flash?.index === i && Date.now() - state.flash.at < 1200
+      ? ` flash" style="animation-delay:-${Date.now() - state.flash.at}ms` : '';
+    return `<li data-uidx="${i}" class="${overlapping.has(i) ? 'overlap' : ''}${flash}"><div class="unitrow">` +
       `<span class="chip" style="background:${hex(ZONE_COLORS[label] ?? 0x90a4ae)}"></span>` +
       `<input class="name" data-uname="${i}" value="${esc(u.name)}" title="区分名（変更できます）">` +
       `<span class="num">${res ? `${fmt(res.total)} m³` : '計算中…'}</span><button data-udel="${i}">削除</button></div>` +
@@ -816,9 +844,11 @@ function renderUnits() {
 
 function renderUnitSummary() {
   const ur = state.unitResult;
+  // 見出しの大きな数字：二重拾いのない合計（除外オンなら区分の合計と同じ）
+  $('listTotal').innerHTML = !state.units.length ? '' : ur ? `${fmt(ur.union_total)} <small>m³</small>` : '<small>計算中…</small>';
   if (!ur || !state.units.length) { $('unitSummary').innerHTML = ''; return; }
   const unitName = (i) => `区分${i + 1}「${esc(state.units[i].name)}」`;
-  let html = `<div class="unitsum">区分の合計<span class="num">${fmt(ur.sum_total)} m³</span></div>`;
+  let html = ur.overlaps.length ? `<div class="unitsum">区分の単純合計<span class="num">${fmt(ur.sum_total)} m³</span></div>` : '';
   // 同じ部材が2つの区分に入っている＝登録の誤りの可能性が高いので黄色で警告する
   const shared = ur.overlaps.filter((o) => o.members.length);
   // 別の部材どうしの食い込み（柱とスラブの取り合いなど）は、モデル上避けられないので注記にとどめる
@@ -845,6 +875,37 @@ function renderUnitSummary() {
     html += '<div class="muted" style="margin-top:4px">区分どうしの重なりはありません</div>';
   }
   $('unitSummary').innerHTML = html;
+}
+
+// リストの行にマウスを乗せると、その区分の範囲を平面図で縁取る
+const hoverGroup = new THREE.Group();
+overlay.add(hoverGroup);
+let hoverUnit = null;
+function showUnitOutline(i) {
+  if (i === hoverUnit) return;
+  hoverUnit = i;
+  hoverGroup.clear();
+  if (i === null || !state.units[i]) return;
+  const [b0, b1, b2, b3] = state.meta.bounds;
+  const whole = [[[[b0, b1], [b2, b1], [b2, b3], [b0, b3], [b0, b1]]]]; // 工区なし＝モデル全体
+  for (const p of state.units[i].parts) {
+    const color = ZONE_COLORS[p.label] ?? 0x37474f;
+    for (const rings of p.polygons ?? whole) {
+      const shape = new THREE.Shape(rings[0].map(([x, y]) => new THREE.Vector2(x, y)));
+      shape.holes = rings.slice(1).map((r) => new THREE.Path(r.map(([x, y]) => new THREE.Vector2(x, y))));
+      const fill = new THREE.Mesh(new THREE.ShapeGeometry(shape), new THREE.MeshBasicMaterial({
+        color, transparent: true, opacity: 0.22, depthTest: false, side: THREE.DoubleSide,
+      }));
+      fill.renderOrder = 7;
+      hoverGroup.add(fill);
+      for (const ring of rings) {
+        const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints(ring.map(([x, y]) => new THREE.Vector3(x, y, 0))),
+          new THREE.LineBasicMaterial({ color, depthTest: false }));
+        line.renderOrder = 10;
+        hoverGroup.add(line);
+      }
+    }
+  }
 }
 
 // ---------- 工区割の保存・読込 ----------
@@ -1001,6 +1062,11 @@ $('unitList').addEventListener('click', (ev) => {
   } else return;
   onUnitsChanged();
 });
+$('unitList').addEventListener('mouseover', (ev) => {
+  const li = ev.target.closest('li[data-uidx]');
+  showUnitOutline(li ? Number(li.dataset.uidx) : null);
+});
+$('unitList').addEventListener('mouseleave', () => showUnitOutline(null));
 $('excludeRegistered').addEventListener('change', (ev) => {
   state.excludeRegistered = ev.target.checked;
   state.unitResult = null;

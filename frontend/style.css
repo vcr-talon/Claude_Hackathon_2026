@@ -19,7 +19,21 @@ body {
 }
 aside { background: var(--panel); overflow-y: auto; padding: 12px 14px; }
 #sidebar { border-right: 1px solid var(--line); }
-#results { border-left: 1px solid var(--line); }
+#results { border-left: 1px solid var(--line); display: flex; flex-direction: column; padding: 0; overflow: hidden; }
+#results .pane-top { flex: 1 1 55%; overflow-y: auto; padding: 12px 14px; }
+#results .pane-bottom { flex: 0 1 45%; overflow-y: auto; padding: 10px 14px; border-top: 2px solid var(--accent); background: #f8fafc; }
+.listhead { display: flex; align-items: baseline; justify-content: space-between; position: sticky; top: -10px;
+  background: #f8fafc; padding: 4px 0; z-index: 1; }
+.listhead h2 { margin: 0; }
+#listTotal { font-size: 22px; font-weight: bold; font-variant-numeric: tabular-nums; }
+#listTotal small { font-size: 13px; font-weight: normal; }
+.zone .breakdown { display: grid; grid-template-columns: 1fr auto; gap: 2px 8px; font-size: 13px; margin: 2px 0 4px; }
+.zone .breakdown .num { text-align: right; font-variant-numeric: tabular-nums; }
+.zone .breakdown .done { color: #616161; }
+.zone .breakdown .open { font-weight: bold; }
+.zone .alldone { color: #2e7d32; font-size: 13px; font-weight: bold; margin-top: 8px; }
+.units li.flash { animation: flash 1.2s ease-out; }
+@keyframes flash { 0% { background: #ffeb3b; } 100% { background: inherit; } }
 h1 { font-size: 18px; margin: 0 0 4px; }
 h2 { font-size: 15px; margin: 0 0 8px; }
 section { border-top: 1px solid var(--line); padding: 12px 0; }
