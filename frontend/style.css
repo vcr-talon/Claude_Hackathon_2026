@@ -20,8 +20,9 @@ body {
 aside { background: var(--panel); overflow-y: auto; padding: 12px 14px; }
 #sidebar { border-right: 1px solid var(--line); }
 #results { border-left: 1px solid var(--line); display: flex; flex-direction: column; padding: 0; overflow: hidden; }
-#results .pane-top { flex: 1 1 55%; overflow-y: auto; padding: 12px 14px; }
-#results .pane-bottom { flex: 0 1 45%; overflow-y: auto; padding: 10px 14px; border-top: 2px solid var(--accent); background: #f8fafc; }
+/* 上段（いまの条件）が残りを使う。下段（打設リスト）は中身の分だけ広がり、上限は4割（6:4）。超えたら下段の中でスクロール */
+#results .pane-top { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 12px 14px; }
+#results .pane-bottom { flex: 0 0 auto; max-height: 40%; overflow-y: auto; padding: 10px 14px; border-top: 2px solid var(--accent); background: #f8fafc; }
 .listhead { display: flex; align-items: baseline; justify-content: space-between; position: sticky; top: -10px;
   background: #f8fafc; padding: 4px 0; z-index: 1; }
 .listhead h2 { margin: 0; }

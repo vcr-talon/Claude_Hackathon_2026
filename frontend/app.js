@@ -1248,6 +1248,10 @@ function renderUnits() {
       `${parts}</li>`;
   }).join('');
   renderUnitSummary();
+  // 下段が上限まで広がった後も、追加した行が見えるようにする
+  if (state.flash && Date.now() - state.flash.at < 300) {
+    $('unitList').querySelector(`li[data-uidx="${state.flash.index}"]`)?.scrollIntoView({ block: 'nearest' });
+  }
 }
 
 function renderUnitSummary() {
