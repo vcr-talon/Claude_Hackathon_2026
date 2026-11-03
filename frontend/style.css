@@ -82,6 +82,8 @@ table.mini td.num { text-align: right; font-variant-numeric: tabular-nums; }
 #viewport canvas { display: block; }
 .labels { position: absolute; top: 0; left: 0; pointer-events: none; }
 .viewbtns { position: absolute; top: 10px; left: 10px; z-index: 5; display: flex; gap: 6px; }
+.viewtoggle { display: flex; align-items: center; gap: 4px; background: #fff; border: 1px solid var(--line);
+  border-radius: 6px; padding: 4px 8px; font-size: 13px; cursor: pointer; }
 .hint { position: absolute; bottom: 10px; left: 10px; z-index: 5; background: rgba(255,255,255,.9);
   border-radius: 6px; padding: 4px 8px; font-size: 12px; color: var(--muted); }
 .loading { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;

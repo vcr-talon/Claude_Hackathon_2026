@@ -35,6 +35,7 @@ const state = {
   unitResult: null,
   excludeRegistered: true, // 登録済みの区分と重なる部分を差し引く（先に登録した区分が優先）
   hiddenKeys: new Set(), // 高さ範囲内がすべて登録済みの立体（表示しない）
+  slabSee: true, // 平面表示でスラブを透かす
 };
 
 // ---------- Three.js の準備 ----------
@@ -107,16 +108,20 @@ let meshes = [];
 const matCache = new Map();
 const edgeMat = new THREE.LineBasicMaterial({ color: 0x37474f, clippingPlanes: clips, transparent: true, opacity: 0.45 });
 
-function surfaceMat(color, opacity = 1) {
-  const key = `${color}-${opacity}`;
+// depthWrite=false は透かしたスラブ用：下の部材を隠さず、白い三角のちらつきも出ない
+function surfaceMat(color, opacity = 1, depthWrite = true) {
+  const key = `${color}-${opacity}-${depthWrite}`;
   if (!matCache.has(key)) {
     matCache.set(key, new THREE.MeshLambertMaterial({
-      color, side: THREE.DoubleSide, clippingPlanes: clips, transparent: opacity < 1, opacity,
+      color, side: THREE.DoubleSide, clippingPlanes: clips, transparent: opacity < 1, opacity, depthWrite,
       polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1,
     }));
   }
   return matCache.get(key);
 }
+
+// 平面表示で直上階のスラブが柱・梁・壁を覆わないよう、スラブを透かす（数量の範囲は変えない）
+const seeThroughSlab = () => state.view === 'plan' && state.slabSee;
 
 function decode(b64, Type) {
   const bin = atob(b64);
@@ -172,7 +177,9 @@ function paint() {
     if (!u.ok) color = ERROR_COLOR;
     else if (state.selected.has(u.member_id)) color = SELECT_COLOR;
     else if (dimOthers) { color = DIM_COLOR; opacity = 0.35; }
-    m.material = surfaceMat(color, opacity);
+    const seeThrough = u.category === 'スラブ' && seeThroughSlab();
+    m.material = seeThrough ? surfaceMat(color, Math.min(opacity, 0.25), false) : surfaceMat(color, opacity);
+    m.renderOrder = seeThrough ? 2 : 0; // 透明なスラブは他の部材の後に描く
   }
 }
 
@@ -363,7 +370,8 @@ function setView(view) {
   planCtl.enabled = view === 'plan';
   perspCtl.enabled = view !== 'plan';
   document.querySelectorAll('button.view').forEach((b) => b.classList.toggle('active', b.dataset.view === view));
-  if (state.meta) updateBand();
+  if (state.meta) { updateBand(); paint(); } // スラブの透かしは平面表示だけ
+  $('slabSeeWrap').classList.toggle('hidden', view !== 'plan');
   // 境界線・工区名は平面でしか操作できないので、3Dに切り替えたらモードを抜ける
   if (view !== 'plan' && (state.mode === 'boundary' || state.mode === 'zone')) setMode(state.mode);
   updateHint();
@@ -546,7 +554,9 @@ function planPoint(ev) {
 function pickMember(ev) {
   setRay(ev);
   const hits = raycaster.intersectObjects(meshes.filter((m) => m.visible), false);
-  const hit = hits.find((h) => h.point.z >= state.z0 - 1e-3 && h.point.z <= state.z1 + 1e-3);
+  const inRange = hits.filter((h) => h.point.z >= state.z0 - 1e-3 && h.point.z <= state.z1 + 1e-3);
+  // スラブを透かしているときは、透けて見えている柱・梁・壁を優先して選ぶ
+  const hit = (seeThroughSlab() && inRange.find((h) => h.object.userData.category !== 'スラブ')) || inRange[0];
   return hit ? hit.object.userData : null;
 }
 function worldPerPixel() {
@@ -1055,6 +1065,7 @@ for (const id of ['upBase', 'lowBase', 'upOff', 'lowOff']) $(id).addEventListene
 document.querySelectorAll('button.mode').forEach((b) => b.addEventListener('click', () => setMode(b.dataset.mode)));
 document.querySelectorAll('button.view').forEach((b) => b.addEventListener('click', () => setView(b.dataset.view)));
 $('fit').addEventListener('click', fit);
+$('slabSee').addEventListener('change', (ev) => { state.slabSee = ev.target.checked; paint(); });
 planCtl.addEventListener('change', () => { if (highlightTag) updateBand(); }); // 拡大縮小しても帯の太さを画面上で一定に
 $('pendingOk').addEventListener('click', confirmPending);
 $('pendingCancel').addEventListener('click', cancelPending);
