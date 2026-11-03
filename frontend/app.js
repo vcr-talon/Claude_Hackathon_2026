@@ -479,7 +479,7 @@ function setMode(mode) {
   if (state.meta) highlightAxis(null);
   renderer.domElement.style.cursor = '';
   updateHint();
-  if (needBoundary) toast('先に境界線を引いてください'); // ヒントの更新より後に出す
+  if (needBoundary) toast('先に境界線を引いてください', 'error');
 }
 
 function updateHint() {
@@ -625,7 +625,7 @@ function onClick(ev) {
   if (state.mode === 'zone' && state.view === 'plan') {
     const p = planPoint(ev);
     if (!p) return;
-    if (!state.boundaries.length) { toast('先に境界線を引いてください'); return; }
+    if (!state.boundaries.length) { toast('先に境界線を引いてください', 'error'); return; }
     const r = regionOf(p.x, p.y);
     const existing = state.seeds.filter((s) => regionOf(s.x, s.y) === r);
     state.seeds = state.seeds.filter((s) => !existing.includes(s));
@@ -644,7 +644,10 @@ function onClick(ev) {
   }
   if (u) {
     const m = state.meta.members[u.member_id];
-    toast(`${m.category}　${m.name || '(名称なし)'}　所属階：${m.storey ?? '-'}　材料：${u.material}${u.ok ? '' : '　※未計算（形状不備）'}`);
+    const reason = u.ok ? '' : state.meta.uncomputed.find((x) => x.key === u.key)?.reason ?? '形状不備';
+    showTip(ev, `<b>${esc(m.category)}　${esc(m.name || '(名称なし)')}</b>` +
+      `<div>所属階：${esc(m.storey ?? '-')}　材料：${esc(u.material)}</div>` +
+      (u.ok ? '' : `<div class="warn">未計算（${esc(reason)}）</div>`));
   }
 }
 
@@ -652,7 +655,7 @@ let down = null;
 const selbox = document.createElement('div');
 selbox.className = 'selbox hidden';
 viewport.appendChild(selbox);
-renderer.domElement.addEventListener('pointerdown', (ev) => { down = { x: ev.clientX, y: ev.clientY, button: ev.button }; });
+renderer.domElement.addEventListener('pointerdown', (ev) => { down = { x: ev.clientX, y: ev.clientY, button: ev.button }; hideTip(); });
 renderer.domElement.addEventListener('pointermove', (ev) => {
   if (state.mode === 'boundary' && state.view === 'plan') {
     const p = planPoint(ev);
@@ -702,12 +705,39 @@ function onSelectionChanged() {
   if (state.selectedOnly) scheduleCompute();
 }
 
-let toastTimer = null;
-function toast(msg) {
-  $('hint').textContent = msg;
-  clearTimeout(toastTimer);
-  toastTimer = setTimeout(updateHint, 5000);
+// サーバーのエラー応答から理由を取り出す（JSONでない応答でも落ちないように）
+async function errorDetail(res) {
+  try {
+    const d = (await res.json()).detail;
+    return typeof d === 'string' ? d : `入力の形式が正しくありません（${res.status}）`;
+  } catch {
+    return `サーバーの応答が正しくありません（${res.status}）`;
+  }
 }
+
+// 通知はビューポート上部のトーストに出す（画面下のヒント欄は操作ヒント専用）。
+// error：赤・6秒またはクリックで閉じる／ok：緑・3秒／info：紺・4秒。同時には1つだけ
+const TOAST_MS = { error: 6000, ok: 3000, info: 4000 };
+let toastTimer = null;
+function toast(msg, kind = 'info') {
+  const el = $('toast');
+  el.textContent = msg;
+  el.className = `toast ${kind}`;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.add('hidden'), TOAST_MS[kind] ?? 4000);
+}
+
+// 部材情報の吹き出し。次のクリックかカメラ操作で閉じる
+function showTip(ev, html) {
+  const el = $('tip'), r = viewport.getBoundingClientRect();
+  el.innerHTML = html;
+  el.classList.remove('hidden');
+  // クリック位置の右下に出し、ビューポートからはみ出す場合は左・上に回す
+  const x = ev.clientX - r.left + 14, y = ev.clientY - r.top + 14;
+  el.style.left = `${Math.min(x, r.width - el.offsetWidth - 8)}px`;
+  el.style.top = `${y + el.offsetHeight > r.height - 8 ? ev.clientY - r.top - el.offsetHeight - 10 : y}px`;
+}
+const hideTip = () => $('tip').classList.add('hidden');
 
 // ---------- 計算 ----------
 let computeTimer = null, computeSeq = 0;
@@ -730,7 +760,9 @@ async function runCompute() {
   const res = await fetch('/api/compute', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
   if (seq !== computeSeq) return;
   if (!res.ok) {
-    $('resultBody').innerHTML = `<div class="warn">計算できません：${esc((await res.json()).detail)}</div>`;
+    const detail = await errorDetail(res);
+    $('resultBody').innerHTML = `<div class="warn">計算できません：${esc(detail)}</div>`;
+    toast(`計算できません：${detail}`, 'error');
     return;
   }
   // 登録時に「計算した時点の条件」をそのまま使えるよう、条件も一緒に持っておく
@@ -889,7 +921,12 @@ async function runUnits() {
   };
   const res = await fetch('/api/units', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
   if (seq !== unitSeq) return;
-  if (!res.ok) { $('unitSummary').innerHTML = `<div class="warn">計算できません：${esc((await res.json()).detail)}</div>`; return; }
+  if (!res.ok) {
+    const detail = await errorDetail(res);
+    $('unitSummary').innerHTML = `<div class="warn">計算できません：${esc(detail)}</div>`;
+    toast(`打設リストを計算できません：${detail}`, 'error');
+    return;
+  }
   state.unitResult = await res.json();
   renderUnits();
 }
@@ -1004,7 +1041,7 @@ function savePlan() {
   a.download = `${state.meta.source.replace(/\.ifc$/i, '')}_工区割_${stamp}.json`;
   a.click();
   URL.revokeObjectURL(a.href);
-  toast(`工区割を保存しました：${a.download}`);
+  toast(`工区割を保存しました：${a.download}`, 'ok');
 }
 
 function applyPlan(plan) {
@@ -1042,9 +1079,9 @@ async function openPlan(file) {
     const plan = JSON.parse(await file.text());
     applyPlan(plan);
     const note = plan.source && plan.source !== state.meta.source ? `（保存時のIFCは ${plan.source}。通り芯と階の名前で合わせました）` : '';
-    toast(`工区割を開きました：${file.name}${note}`);
+    toast(`工区割を開きました：${file.name}${note}`, 'ok');
   } catch (e) {
-    toast(`工区割を開けませんでした：${e instanceof SyntaxError ? 'ファイルの形式が正しくありません' : e.message}`);
+    toast(`工区割を開けませんでした：${e instanceof SyntaxError ? 'ファイルの形式が正しくありません' : e.message}`, 'error');
   }
 }
 
@@ -1091,7 +1128,9 @@ document.querySelectorAll('button.mode').forEach((b) => b.addEventListener('clic
 document.querySelectorAll('button.view').forEach((b) => b.addEventListener('click', () => setView(b.dataset.view)));
 $('fit').addEventListener('click', fit);
 $('slabSee').addEventListener('change', (ev) => { state.slabSee = ev.target.checked; paint(); });
-planCtl.addEventListener('change', () => { if (highlightTag) updateBand(); }); // 拡大縮小しても帯の太さを画面上で一定に
+planCtl.addEventListener('change', () => { if (highlightTag) updateBand(); hideTip(); }); // 拡大縮小しても帯の太さを画面上で一定に
+perspCtl.addEventListener('change', hideTip);
+$('toast').addEventListener('click', () => $('toast').classList.add('hidden'));
 $('pendingOk').addEventListener('click', confirmPending);
 $('pendingCancel').addEventListener('click', cancelPending);
 $('pendingOff').addEventListener('input', drawLines);
