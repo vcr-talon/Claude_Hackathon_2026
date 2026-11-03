@@ -36,7 +36,34 @@ const state = {
   excludeRegistered: true, // 登録済みの区分と重なる部分を差し引く（先に登録した区分が優先）
   hiddenKeys: new Set(), // 高さ範囲内がすべて登録済みの立体（表示しない）
   slabSee: true, // 平面表示でスラブを透かす
+  zoneNames: {}, // 工区の表示名 {A: '1工区', ...}。内部のキーはA〜Fのまま
 };
+
+// 工区の表示名：名前を付けていればその名前、なければ「A」（見出しでは「工区 A」）
+const zoneName = (l) => state.zoneNames[l] || l;
+const zoneTitle = (l) => state.zoneNames[l] || `工区 ${l}`;
+
+// ---------- 取り消し（Ctrl+Z）／やり直し（Ctrl+Y） ----------
+// 境界線・工区名・打設リストを変える直前の状態を積む
+const HISTORY_MAX = 30;
+const undoStack = [], redoStack = [];
+const snapshot = () => structuredClone({ boundaries: state.boundaries, seeds: state.seeds, units: state.units, zoneNames: state.zoneNames });
+function pushHistory(s = snapshot()) {
+  undoStack.push(s);
+  if (undoStack.length > HISTORY_MAX) undoStack.shift();
+  redoStack.length = 0;
+}
+function restoreHistory(from, to, msg) {
+  if (!from.length) return;
+  to.push(snapshot());
+  Object.assign(state, from.pop());
+  cancelPending();
+  renderBoundaryList();
+  renderZoneLabels();
+  onUnitsChanged();
+  scheduleCompute();
+  toast(msg, 'info');
+}
 
 // ---------- Three.js の準備 ----------
 const viewport = $('viewport');
@@ -332,7 +359,7 @@ function drawLines() {
     const div = document.createElement('div');
     div.className = 'seedtag';
     div.style.color = hex(ZONE_COLORS[s.label] ?? 0x333333);
-    div.textContent = s.label;
+    div.textContent = zoneName(s.label);
     const label = new CSS2DObject(div);
     label.position.set(s.x, s.y, 0);
     lineGroup.add(label);
@@ -553,7 +580,7 @@ function updateHint() {
   const base = state.view === 'plan' ? '左ドラッグ：移動　ホイール：拡大縮小' : '左ドラッグ：回転　右ドラッグ：移動　ホイール：拡大縮小';
   const extra = state.guide ? `　｜　${state.guide}` : {
     boundary: '　｜　通り芯をクリックして境界線を作成',
-    zone: `　｜　範囲をクリックして工区「${state.zoneLabel}」を付ける`,
+    zone: `　｜　範囲をクリックして工区「${zoneName(state.zoneLabel)}」を付ける`,
     select: '　｜　部材をクリックで選択',
     view: '　｜　部材をクリックで情報表示',
   }[state.mode];
@@ -602,6 +629,7 @@ function confirmPending() {
   const offset = pendingOffset() || 0; // -0 を 0 にそろえる
   lastPendingOff = Math.abs(offset);
   const b = { axis: axis.tag, offset, points: offsetAxisLine(axis, offset) };
+  pushHistory();
   if (state.pending.editIndex !== null) state.boundaries[state.pending.editIndex] = b;
   else state.boundaries.push(b);
   cancelPending();
@@ -624,10 +652,59 @@ function renderBoundaryList() {
   drawLines();
 }
 
+// ボタンは作り直さず見た目だけ更新する（作り直すとダブルクリックが届かない）
 function renderZoneLabels() {
-  $('zoneLabels').innerHTML = ZONE_LABELS.map((l) =>
-    `<button data-label="${l}" style="color:${l === state.zoneLabel ? '#fff' : hex(ZONE_COLORS[l])};` +
-    `background:${l === state.zoneLabel ? hex(ZONE_COLORS[l]) : '#fff'}">${l}</button>`).join('');
+  const box = $('zoneLabels');
+  if (!box.children.length) {
+    box.innerHTML = ZONE_LABELS.map((l) => `<button data-label="${l}" title="ダブルクリックで名前を変更"></button>`).join('');
+  }
+  for (const b of box.querySelectorAll('button[data-label]')) {
+    const l = b.dataset.label, on = l === state.zoneLabel;
+    b.textContent = zoneName(l);
+    b.style.color = on ? '#fff' : hex(ZONE_COLORS[l]);
+    b.style.background = on ? hex(ZONE_COLORS[l]) : '#fff';
+  }
+}
+
+// 工区のボタンをダブルクリックすると、その場で名前を入力できる（空にするとA〜Fに戻る）
+function editZoneName(btn) {
+  const l = btn.dataset.label;
+  const input = document.createElement('input');
+  input.className = 'zonename';
+  input.value = state.zoneNames[l] ?? '';
+  input.placeholder = l;
+  btn.replaceWith(input);
+  input.focus();
+  input.select();
+  let done = false;
+  const finish = (save) => {
+    if (done) return;
+    done = true;
+    const name = input.value.trim();
+    input.replaceWith(btn);
+    if (save && name !== (state.zoneNames[l] ?? '')) {
+      pushHistory();
+      state.zoneNames = { ...state.zoneNames };
+      if (name) state.zoneNames[l] = name; else delete state.zoneNames[l];
+      onZoneNamesChanged();
+    }
+    renderZoneLabels();
+  };
+  input.addEventListener('keydown', (ev) => {
+    ev.stopPropagation(); // Escでモードが終わらないように
+    if (ev.key === 'Enter') finish(true);
+    if (ev.key === 'Escape') finish(false);
+  });
+  input.addEventListener('blur', () => finish(true));
+}
+
+function onZoneNamesChanged() {
+  for (const u of state.units) if (u.autoName) u.name = unitName(u.parts);
+  renderZoneLabels();
+  drawLines();
+  updateHint();
+  renderUnits();
+  if (state.result) renderResults();
 }
 
 // ---------- 画面操作（クリック・ドラッグ） ----------
@@ -695,6 +772,7 @@ function onClick(ev) {
     if (!state.boundaries.length) { toast('先に境界線を引いてください', 'error'); return; }
     const r = regionOf(p.x, p.y);
     const existing = state.seeds.filter((s) => regionOf(s.x, s.y) === r);
+    pushHistory();
     state.seeds = state.seeds.filter((s) => !existing.includes(s));
     if (!existing.some((s) => s.label === state.zoneLabel)) state.seeds.push({ label: state.zoneLabel, x: p.x, y: p.y });
     drawLines();
@@ -871,44 +949,50 @@ function renderResults() {
     const sum = r.zones.reduce((a, z) => a + whole(z), 0);
     const open = r.zones.reduce((a, z) => a + z.total, 0);
     html += `<div class="sum">工区合計 <div class="total">${fmt(sum)} m³</div>` +
-      `<div class="muted">${r.zones.map((z) => `${esc(z.label)} ${fmt(whole(z))}`).join(' ＋ ')}` +
+      `<div class="muted">${r.zones.map((z) => `${esc(zoneName(z.label))} ${fmt(whole(z))}`).join(' ＋ ')}` +
       `${open < sum - 0.0005 ? `　（未登録 ${fmt(open)}）` : ''}</div></div>`;
   }
   for (const z of r.zones) {
     const color = ZONE_COLORS[z.label];
-    html += `<div class="zone"><h3>${color ? `<span class="chip" style="background:${hex(color)}"></span>工区 ` : ''}${esc(z.polygons ? z.label : wholeName())}</h3>`;
+    html += `<div class="zone"><h3>${color ? `<span class="chip" style="background:${hex(color)}"></span>` : ''}${esc(z.polygons ? zoneTitle(z.label) : wholeName())}</h3>`;
     html += `<div class="muted">この条件の数量</div><div class="total">${fmt(whole(z))} <small>m³</small></div>`;
     if (z.excluded > 0.0005) {
       html += '<div class="breakdown">' +
         `<span class="done">うち打設リストに登録済み（灰色表示）</span><span class="num done">${fmt(z.excluded)} m³</span>` +
         `<span class="open">未登録（追加できる分）</span><span class="num open">${fmt(z.total)} m³</span></div>`;
     }
-    if (z.total > 0.0005) html += `<div class="muted">${z.excluded > 0.0005 ? '未登録分の内訳' : '内訳'}</div>`;
+    // 常に見せるのは工区名・数量・種別内訳・未計算の警告・追加ボタンだけ。根拠は折りたたむ
+    if (z.total > 0.0005) {
+      html += `<div class="muted">${z.excluded > 0.0005 ? '未登録分の内訳' : '内訳'}` +
+        ' <span class="qmark" title="柱→梁→壁→スラブ→基礎→階段→その他の順で重なりを配分した参考値です。総数量は重複を除いた体積です。">？</span></div>';
+    }
     html += '<table class="mini">';
     for (const [cat, v] of Object.entries(z.by_category)) {
       if (v < 0.0005) continue;
       html += `<tr><td><span class="chip" style="background:${hex(CAT_COLORS[cat] ?? 0x546e7a)}"></span> ${esc(cat)}</td><td class="num">${fmt(v)}</td></tr>`;
     }
     html += '</table>';
-    const mats = Object.entries(z.by_material);
-    if (mats.length > 1) {
-      html += '<table class="mini">' + mats.map(([m, v]) => `<tr><td>${esc(m)}</td><td class="num">${fmt(v)}</td></tr>`).join('') + '</table>';
-    }
-    html += `<div class="muted">対象 ${z.members.length} 部材　重複控除 ${fmt(z.overlap)} m³（単純合計 ${fmt(z.raw_sum)}）</div>`;
     if (z.uncomputed.length) {
       const ref = z.uncomputed.reduce((a, u) => a + (u.reference_volume || 0), 0);
       html += `<details><summary class="warn">⚠ 未計算 ${z.uncomputed.length} 件（参考体積 ${fmt(ref)} m³・総数量に含まず）</summary><table class="mini">` +
         z.uncomputed.map((u) => `<tr><td>${esc(u.category)} ${esc(u.name)}</td><td>${esc(u.reason)}</td></tr>`).join('') + '</table></details>';
     }
-    html += `<details><summary>対象部材の一覧</summary><table class="mini">` +
+    html += `<details class="basis"><summary>根拠を見る</summary>` +
+      `<div class="muted">対象 ${z.members.length} 部材　重複控除 ${fmt(z.overlap)} m³（単純合計 ${fmt(z.raw_sum)}）</div>`;
+    const mats = Object.entries(z.by_material);
+    if (mats.length > 1) {
+      html += '<div class="muted">材料内訳</div><table class="mini">' +
+        mats.map(([m, v]) => `<tr><td>${esc(m)}</td><td class="num">${fmt(v)}</td></tr>`).join('') + '</table>';
+    }
+    html += '<div class="muted">対象部材の一覧（範囲内に切り取った体積・重複控除前）</div><table class="mini">' +
       z.members.slice(0, 300).map((m) => `<tr><td>${esc(m.category)}</td><td>${esc(m.name)}</td><td class="num">${fmt(m.volume, 3)}</td></tr>`).join('') +
-      '</table><div class="muted">部材ごとの値は範囲内に切り取った体積（重複控除前）</div></details>';
+      '</table></details>';
     if (z.total > 0.0005) {
       const zi = r.zones.indexOf(z);
       html += `<div class="regrow"><button class="reg primary" data-reg="${zi}">＋ 未登録の ${fmt(z.total)} m³ を打設リストに追加</button>`;
       if (state.units.length) {
-        html += `<select data-addto="${zi}"><option value="">既存の区分に追加…</option>` +
-          state.units.map((u, i) => `<option value="${i}">区分${i + 1}「${esc(u.name)}」に追加</option>`).join('') + '</select>';
+        html += `<select data-addto="${zi}"><option value="">打設リストの既存の行にまとめる…</option>` +
+          state.units.map((u, i) => `<option value="${i}">区分${i + 1}「${esc(u.name)}」にまとめる</option>`).join('') + '</select>';
       }
       html += '</div>';
     } else if (z.excluded > 0.0005) {
@@ -917,7 +1001,6 @@ function renderResults() {
     }
     html += '</div>';
   }
-  html += '<div class="muted">内訳は「柱→梁→壁→スラブ→基礎→階段→その他」の順で重なりを配分した参考値です。総数量は重複を除いた体積です。</div>';
   $('resultBody').innerHTML = html;
 }
 
@@ -945,6 +1028,7 @@ function registerUnit(zi, target = null) {
     label: z.polygons ? z.label : null, polygons: z.polygons, wholeName: z.polygons ? undefined : wholeName(),
     categories: allCats ? null : req.categories, member_ids: req.member_ids,
   };
+  pushHistory();
   if (target !== null) {
     const u = state.units[target];
     u.parts.push(part);
@@ -965,8 +1049,13 @@ function unitName(parts) {
     if (!groups.has(key)) groups.set(key, { range: p.rangeText.split('（')[0], filters, labels: new Set(), wholeName: p.wholeName ?? 'フロア全体' });
     if (p.label) groups.get(key).labels.add(p.label);
   }
-  return [...groups.values()].map((g) =>
-    g.range + (g.labels.size ? ` ${[...g.labels].sort().join('・')}工区` : ` ${g.wholeName}`) + g.filters).join(' ＋ ');
+  return [...groups.values()].map((g) => g.range + ` ${g.labels.size ? zonesText([...g.labels].sort()) : g.wholeName}` + g.filters).join(' ＋ ');
+}
+
+// 工区の並び：名前を変えていなければ「A・B工区」、変えていれば「1工区・東側」
+function zonesText(labels) {
+  if (!labels.some((l) => state.zoneNames[l])) return `${labels.join('・')}工区`;
+  return labels.map((l) => state.zoneNames[l] || `${l}工区`).join('・');
 }
 
 function onUnitsChanged() {
@@ -980,7 +1069,7 @@ function onUnitsChanged() {
 
 function partText(p) {
   const filters = [p.categories ? p.categories.join('・') : null, p.member_ids ? `選択${p.member_ids.length}部材` : null].filter(Boolean);
-  return `${p.rangeText}　${p.label ? `工区${p.label}` : p.wholeName ?? 'フロア全体'}${filters.length ? `　絞り込み：${filters.join('／')}` : ''}`;
+  return `${p.rangeText}　${p.label ? zonesText([p.label]) : p.wholeName ?? 'フロア全体'}${filters.length ? `　絞り込み：${filters.join('／')}` : ''}`;
 }
 
 let unitSeq = 0;
@@ -1102,7 +1191,7 @@ function savePlan() {
     format: PLAN_FORMAT, version: 2, saved_at: new Date().toISOString(), source: state.meta.source,
     excludeRegistered: state.excludeRegistered,
     range: Object.fromEntries(RANGE_IDS.map((id) => [id, $(id).value])),
-    boundaries: state.boundaries, seeds: state.seeds,
+    boundaries: state.boundaries, seeds: state.seeds, zoneNames: state.zoneNames,
     categories: [...state.categories], selected: [...state.selected], selectedOnly: state.selectedOnly,
     units: state.units,
   };
@@ -1126,9 +1215,12 @@ function applyPlan(plan) {
   if (lost.length) throw new Error(`開いているIFCに無い通り芯があります（${[...new Set(lost)].join('、')}）`);
 
   cancelPending();
+  pushHistory(); // 開く前の工区割に Ctrl+Z で戻れる
   for (const id of RANGE_IDS) $(id).value = plan.range[id];
   state.boundaries = plan.boundaries;
   state.seeds = plan.seeds;
+  state.zoneNames = plan.zoneNames ?? {}; // 名前のない古いファイルはA〜Fのまま
+  renderZoneLabels();
   state.categories = new Set(plan.categories.filter((c) => state.meta.categories.includes(c)));
   for (const cb of document.querySelectorAll('#categories input')) cb.checked = state.categories.has(cb.dataset.cat);
   state.selected = new Set(plan.selected.filter((id) => id in state.meta.members));
@@ -1169,16 +1261,34 @@ function renderSidebar() {
     `<label><input type="checkbox" data-cat="${esc(c)}" checked><span class="chip" style="background:${hex(CAT_COLORS[c])}"></span>${esc(c)}</label>`).join('');
 }
 
+// 読込中は経過秒数を足して、止まっていないことが分かるようにする
+let loadingTimer = null;
+function showLoading(msg) {
+  const el = $('loading'), t0 = Date.now();
+  el.textContent = msg;
+  el.classList.remove('hidden');
+  clearInterval(loadingTimer);
+  loadingTimer = setInterval(() => { el.textContent = `${msg}　${Math.floor((Date.now() - t0) / 1000)}秒`; }, 1000);
+}
+function endLoading(msg = null) {
+  clearInterval(loadingTimer);
+  if (msg) $('loading').textContent = msg;
+  else $('loading').classList.add('hidden');
+}
+
 async function loadModel() {
-  $('loading').classList.remove('hidden');
+  showLoading('IFCを読み込んでいます…');
   const res = await fetch('/api/model');
   if (!res.ok) {
-    $('loading').textContent = 'IFCファイルを開いてください（左上「IFCを開く」）';
+    endLoading('IFCファイルを開いてください（左上「IFCを開く」）');
     return;
   }
   state.meta = await res.json();
   state.boundaries = [];
   state.seeds = [];
+  state.zoneNames = {};
+  undoStack.length = redoStack.length = 0; // 別のIFCの工区割には戻さない
+  renderZoneLabels();
   state.selected.clear();
   state.units = [];
   state.unitResult = null;
@@ -1191,7 +1301,7 @@ async function loadModel() {
   resize();
   fit();
   setView('3d'); // 読込直後はモデル全体を3Dで見せる
-  $('loading').classList.add('hidden');
+  endLoading();
 }
 
 $('storey').addEventListener('change', onStoreyChange);
@@ -1210,10 +1320,22 @@ $('pendingCancel').addEventListener('click', cancelPending);
 $('pendingOff').addEventListener('input', drawLines);
 $('pendingOff').addEventListener('keydown', (ev) => { if (ev.key === 'Enter') confirmPending(); });
 window.addEventListener('keydown', (ev) => { if (ev.key === 'Escape') { cancelPending(); if (state.mode !== 'view') setMode(state.mode); } });
+window.addEventListener('keydown', (ev) => {
+  if (!(ev.ctrlKey || ev.metaKey) || !state.meta) return;
+  // 文字や数値の入力中はブラウザ標準の取り消しに任せる
+  const el = document.activeElement;
+  if (el?.tagName === 'TEXTAREA' || el?.tagName === 'SELECT' || (el?.tagName === 'INPUT' && ['text', 'number'].includes(el.type))) return;
+  const key = ev.key.toLowerCase();
+  if (key === 'z' && !ev.shiftKey) restoreHistory(undoStack, redoStack, '元に戻しました（Ctrl+Y でやり直し）');
+  else if (key === 'y' || (key === 'z' && ev.shiftKey)) restoreHistory(redoStack, undoStack, 'やり直しました');
+  else return;
+  ev.preventDefault();
+});
 $('boundaryList').addEventListener('click', (ev) => {
   const del = ev.target.dataset.del, edit = ev.target.dataset.edit;
   if (del !== undefined) {
     // 範囲の形が変わり名前の対応が崩れるため、工区名は付け直してもらう
+    pushHistory();
     state.boundaries.splice(Number(del), 1);
     state.seeds = [];
     renderBoundaryList(); drawLines(); scheduleCompute();
@@ -1227,6 +1349,7 @@ $('zoneLabels').addEventListener('click', (ev) => {
   drawRegionHover();
   updateHint();
 });
+$('zoneLabels').addEventListener('dblclick', (ev) => { if (ev.target.dataset.label) editZoneName(ev.target); });
 $('categories').addEventListener('change', (ev) => {
   const c = ev.target.dataset.cat;
   ev.target.checked ? state.categories.add(c) : state.categories.delete(c);
@@ -1243,8 +1366,10 @@ $('resultBody').addEventListener('change', (ev) => {
 $('unitList').addEventListener('click', (ev) => {
   const { udel, pdel } = ev.target.dataset;
   if (udel !== undefined) {
+    pushHistory();
     state.units.splice(Number(udel), 1);
   } else if (pdel !== undefined) {
+    pushHistory();
     const [i, k] = pdel.split(':').map(Number);
     const u = state.units[i];
     u.parts.splice(k, 1);
@@ -1264,8 +1389,12 @@ $('excludeRegistered').addEventListener('change', (ev) => {
   runUnits();
   scheduleCompute();
 });
+// 区分名の手入力は、入力欄に入ってから出るまでを1回の取り消し単位にする
+let nameBefore = null;
+$('unitList').addEventListener('focusin', (ev) => { if (ev.target.dataset.uname !== undefined) nameBefore = snapshot(); });
 $('unitList').addEventListener('input', (ev) => {
   if (ev.target.dataset.uname === undefined) return;
+  if (nameBefore) { pushHistory(nameBefore); nameBefore = null; }
   const u = state.units[Number(ev.target.dataset.uname)];
   u.name = ev.target.value;
   u.autoName = false; // 手で付けた名前は、条件を追加しても上書きしない
@@ -1281,12 +1410,11 @@ $('planInput').addEventListener('change', (ev) => {
 $('fileInput').addEventListener('change', async (ev) => {
   const file = ev.target.files[0];
   if (!file) return;
-  $('loading').textContent = `${file.name} を読み込んでいます…（初回は数十秒かかります）`;
-  $('loading').classList.remove('hidden');
+  showLoading(`${file.name} を読み込んでいます…（初回は数十秒かかります）`);
   const fd = new FormData();
   fd.append('file', file);
   const res = await fetch('/api/open', { method: 'POST', body: fd });
-  if (!res.ok) { $('loading').textContent = `読み込めませんでした：${(await res.json()).detail}`; return; }
+  if (!res.ok) { endLoading(`読み込めませんでした：${await errorDetail(res)}`); return; }
   await loadModel();
 });
 
