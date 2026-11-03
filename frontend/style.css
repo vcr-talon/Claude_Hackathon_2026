@@ -102,6 +102,8 @@ table.mini td.num { text-align: right; font-variant-numeric: tabular-nums; }
 .dimtag { font-size: 13px; font-weight: bold; color: #1565c0; background: rgba(255,255,255,.9);
   border: 1px solid #1565c0; border-radius: 4px; padding: 0 4px; margin-top: -28px; } /* transform はCSS2DRendererが使うので margin でずらす */
 .seedtag { font-size: 28px; font-weight: bold; text-shadow: 0 0 4px #fff, 0 0 4px #fff; }
+.unsettag { font-size: 14px; font-weight: bold; color: #616161; background: rgba(255,255,255,.85);
+  border-radius: 4px; padding: 1px 6px; white-space: nowrap; }
 .selbox { position: absolute; border: 1px dashed var(--accent); background: rgba(21,101,192,.1);
   pointer-events: none; z-index: 6; }
 

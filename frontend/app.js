@@ -344,14 +344,80 @@ function drawZones() {
   for (const z of state.result?.zones ?? []) {
     if (!z.polygons) continue;
     for (const rings of z.polygons) {
-      const shape = new THREE.Shape(rings[0].map(([x, y]) => new THREE.Vector2(x, y)));
-      shape.holes = rings.slice(1).map((r) => new THREE.Path(r.map(([x, y]) => new THREE.Vector2(x, y))));
-      const mesh = new THREE.Mesh(new THREE.ShapeGeometry(shape), new THREE.MeshBasicMaterial({
+      const mesh = new THREE.Mesh(new THREE.ShapeGeometry(ringsShape(rings)), new THREE.MeshBasicMaterial({
         color: ZONE_COLORS[z.label] ?? 0x888888, transparent: true, opacity: 0.16, depthTest: false, side: THREE.DoubleSide,
       }));
       mesh.renderOrder = 3;
       zoneGroup.add(mesh);
     }
+  }
+  // 名前のない範囲は数量に含まれないので、斜線と「未設定」で目に見えるようにする
+  const named = new Set(state.seeds.map((s) => regionOf(s.x, s.y)));
+  state.regions.forEach((polys, i) => {
+    if (named.has(i)) return;
+    let sx = 0, sy = 0, n = 0;
+    for (const rings of polys) {
+      zoneGroup.add(Object.assign(new THREE.Mesh(new THREE.ShapeGeometry(ringsShape(rings)), hatchMat), { renderOrder: 3 }));
+      for (const [x, y] of rings[0].slice(0, -1)) { sx += x; sy += y; n++; }
+    }
+    const div = document.createElement('div');
+    div.className = 'unsettag';
+    div.textContent = state.mode === 'zone' ? 'クリックで工区名を付ける' : '未設定';
+    const label = new CSS2DObject(div);
+    label.position.set(sx / n, sy / n, 0);
+    zoneGroup.add(label);
+  });
+  updateHatch();
+  drawRegionHover();
+}
+
+const ringsShape = (rings) => {
+  const shape = new THREE.Shape(rings[0].map(([x, y]) => new THREE.Vector2(x, y)));
+  shape.holes = rings.slice(1).map((r) => new THREE.Path(r.map(([x, y]) => new THREE.Vector2(x, y))));
+  return shape;
+};
+
+// 斜線ハッチ：32pxの透明キャンバスに灰色の斜線1本（角の切れ端も描いて継ぎ目なく並ぶようにする）
+const hatchTex = (() => {
+  const c = document.createElement('canvas');
+  c.width = c.height = 32;
+  const g = c.getContext('2d');
+  g.strokeStyle = '#616161';
+  g.lineWidth = 3;
+  for (const d of [-32, 0, 32]) { g.beginPath(); g.moveTo(d, 32); g.lineTo(d + 32, 0); g.stroke(); }
+  const t = new THREE.CanvasTexture(c);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+})();
+const hatchMat = new THREE.MeshBasicMaterial({ map: hatchTex, transparent: true, opacity: 0.35, depthTest: false, side: THREE.DoubleSide });
+// ShapeGeometryのUVは平面座標(m)そのままなので、1マスが画面上で32pxになるよう繰り返し数を合わせる
+function updateHatch() {
+  const k = 1 / (32 * worldPerPixel());
+  hatchTex.repeat.set(k, k);
+}
+
+// 工区名モードで、クリックすると名前が付く範囲を選択中の工区色でなぞる
+const regionHoverGroup = new THREE.Group();
+overlay.add(regionHoverGroup);
+let hoverRegion = -1;
+function drawRegionHover(i = hoverRegion) {
+  hoverRegion = state.mode === 'zone' && state.view === 'plan' ? i : -1;
+  regionHoverGroup.clear();
+  const polys = state.regions[hoverRegion];
+  if (!polys) return;
+  const color = ZONE_COLORS[state.zoneLabel] ?? 0x333333;
+  for (const rings of polys) {
+    for (const r of rings) {
+      const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints(r.map(([x, y]) => new THREE.Vector3(x, y, 0))),
+        new THREE.LineBasicMaterial({ color, depthTest: false }));
+      line.renderOrder = 8;
+      regionHoverGroup.add(line);
+    }
+    const fill = new THREE.Mesh(new THREE.ShapeGeometry(ringsShape(rings)), new THREE.MeshBasicMaterial({
+      color, transparent: true, opacity: 0.12, depthTest: false, side: THREE.DoubleSide }));
+    fill.renderOrder = 4;
+    regionHoverGroup.add(fill);
   }
 }
 
@@ -479,6 +545,7 @@ function setMode(mode) {
   if (state.meta) highlightAxis(null);
   renderer.domElement.style.cursor = '';
   updateHint();
+  if (state.meta) drawZones(); // 「未設定」の文言がモードで変わる
   if (needBoundary) toast('先に境界線を引いてください', 'error');
 }
 
@@ -666,6 +733,11 @@ renderer.domElement.addEventListener('pointermove', (ev) => {
       highlightAxis(tag);
       renderer.domElement.style.cursor = tag ? 'crosshair' : '';
     }
+  }
+  if (state.mode === 'zone' && state.view === 'plan' && !down) {
+    const p = planPoint(ev);
+    const i = p ? regionOf(p.x, p.y) : -1;
+    if (i !== hoverRegion) drawRegionHover(i);
   }
   if (down && down.button === 0 && state.mode === 'select' && state.view === 'plan') {
     const r = viewport.getBoundingClientRect();
@@ -1128,7 +1200,9 @@ document.querySelectorAll('button.mode').forEach((b) => b.addEventListener('clic
 document.querySelectorAll('button.view').forEach((b) => b.addEventListener('click', () => setView(b.dataset.view)));
 $('fit').addEventListener('click', fit);
 $('slabSee').addEventListener('change', (ev) => { state.slabSee = ev.target.checked; paint(); });
-planCtl.addEventListener('change', () => { if (highlightTag) updateBand(); hideTip(); }); // 拡大縮小しても帯の太さを画面上で一定に
+// 拡大縮小しても帯の太さとハッチの間隔を画面上で一定に
+planCtl.addEventListener('change', () => { if (highlightTag) updateBand(); updateHatch(); hideTip(); });
+renderer.domElement.addEventListener('pointerleave', () => { if (hoverRegion >= 0) drawRegionHover(-1); });
 perspCtl.addEventListener('change', hideTip);
 $('toast').addEventListener('click', () => $('toast').classList.add('hidden'));
 $('pendingOk').addEventListener('click', confirmPending);
@@ -1150,6 +1224,7 @@ $('zoneLabels').addEventListener('click', (ev) => {
   if (!ev.target.dataset.label) return;
   state.zoneLabel = ev.target.dataset.label;
   renderZoneLabels();
+  drawRegionHover();
   updateHint();
 });
 $('categories').addEventListener('change', (ev) => {
