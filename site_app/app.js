@@ -1,6 +1,7 @@
 // 現場残量アプリの画面。数量の計算は calc.js（PCアプリで作った表を引いて足すだけ）
 import { fmt, fullVolume, parseSiteData, presetMm, totals, remaining, truckPlan } from './calc.js';
 
+const APP_VERSION = '1.0.0'; // sw.js の VERSION と合わせる（キャッシュで古い版が動いていないか確かめる用）
 const $ = (id) => document.getElementById(id);
 const SVGNS = 'http://www.w3.org/2000/svg';
 const CAT_COLORS = { 柱: '#c62828', 梁: '#ef6c00', 壁: '#0288d1', スラブ: '#a0a4a8', 基礎: '#6d4c41', 階段: '#6a1b9a', その他: '#546e7a' };
@@ -413,14 +414,41 @@ function applyPreset(kind) {
   render();
 }
 
-// ---------- 不具合を追うための記録（設定画面で表示する予定） ----------
-const errors = load('site.errors') ?? [];
+// ---------- 不具合を追うための記録（iPadでは開発者ツールを開けないため、設定画面で見てコピーできるようにする） ----------
+let errors = load('site.errors') ?? [];
 function logError(msg) {
   errors.push({ at: new Date().toISOString(), msg: String(msg).slice(0, 500) });
-  store('site.errors', errors.slice(-50));
+  errors = errors.slice(-50);
+  store('site.errors', errors);
 }
 window.addEventListener('error', (e) => logError(`${e.message} (${e.filename}:${e.lineno})`));
 window.addEventListener('unhandledrejection', (e) => logError(e.reason?.stack ?? e.reason));
+
+function openSettings() {
+  $('appVersion').textContent = APP_VERSION;
+  $('errorLog').value = errors.length
+    ? errors.map((x) => `${x.at}  ${x.msg}`).join('\n') + `\n（版 ${APP_VERSION}・${navigator.userAgent}）`
+    : 'エラーはありません';
+  $('settings').classList.remove('hidden');
+}
+async function copyErrors() {
+  try {
+    await navigator.clipboard.writeText($('errorLog').value);
+    toast('コピーしました');
+  } catch { // クリップボードが使えない端末では選択して手でコピーしてもらう
+    $('errorLog').select();
+    toast('選択した文字を長押ししてコピーしてください');
+  }
+}
+function clearWork() {
+  if (!confirm('この端末に保存した作業（スパンの状態・入力値）をすべて消します。よろしいですか？')) return;
+  try {
+    Object.keys(localStorage).filter((k) => k.startsWith(STORE) || k === LAST).forEach((k) => localStorage.removeItem(k));
+  } catch { /* 保存できない環境 */ }
+  $('settings').classList.add('hidden');
+  toast('保存した作業を消しました');
+  showStart();
+}
 
 // ---------- 起動 ----------
 $('fileInput').addEventListener('change', (e) => {
@@ -446,4 +474,11 @@ document.querySelectorAll('[data-preset]').forEach((b) => b.addEventListener('cl
 $('openOther').addEventListener('click', showStart);
 $('showMissing').addEventListener('click', showMissing);
 $('missingClose').addEventListener('click', () => $('missing').classList.add('hidden'));
+document.querySelectorAll('[data-open-settings]').forEach((b) => b.addEventListener('click', openSettings));
+$('settingsClose').addEventListener('click', () => $('settings').classList.add('hidden'));
+$('copyErrors').addEventListener('click', copyErrors);
+$('clearErrors').addEventListener('click', () => { errors = []; store('site.errors', errors); openSettings(); });
+$('clearWork').addEventListener('click', clearWork);
+// オフラインでも開けるようにする（HTTPSか localhost のときだけ動く）
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').catch((e) => logError(`Service Worker: ${e.message}`));
 showStart();

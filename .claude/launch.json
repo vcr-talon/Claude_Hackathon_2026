@@ -5,8 +5,8 @@
       "name": "qto",
       "runtimeExecutable": ".venv\\Scripts\\python.exe",
       "runtimeArgs": ["backend\\server.py"],
-      "env": { "QTO_NO_BROWSER": "1" },
-      "port": 8765
+      "env": { "QTO_NO_BROWSER": "1", "QTO_PORT": "8766" },
+      "port": 8766
     }
   ]
 }

@@ -4,3 +4,5 @@ __pycache__/
 .qto_cache/
 .qto_uploads/
 *.pyc
+# IFC（実案件の機密を含みうる）は公開しない。サンプルを含めるときは git add -f で明示的に
+*.ifc

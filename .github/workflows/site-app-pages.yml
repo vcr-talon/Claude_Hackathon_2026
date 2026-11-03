@@ -1,0 +1,50 @@
+# 現場残量アプリ（site_app/）を GitHub Pages で配信する。
+# 公開するのはアプリ本体（HTML・JS・CSS・アイコン・manifest・Service Worker）だけ。テスト・設定・データは含めない
+name: 現場残量アプリを公開
+
+on:
+  push:
+    branches: [master, main]
+    paths: ['site_app/**', '.github/workflows/site-app-pages.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: 単体テスト
+        working-directory: site_app
+        run: node --test
+      - name: 公開するファイルだけを集める
+        run: |
+          mkdir _site
+          cp site_app/index.html site_app/app.js site_app/calc.js site_app/style.css \
+             site_app/sw.js site_app/manifest.webmanifest _site/
+          cp -r site_app/icons _site/
+          if find _site -name '*.json' | grep -q .; then echo "データファイルが混ざっています"; exit 1; fi
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

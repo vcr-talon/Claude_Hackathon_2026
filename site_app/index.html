@@ -5,6 +5,11 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
   <meta name="theme-color" content="#263238">
   <title>残量チェック</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon-192.png">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="残量チェック">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -16,6 +21,7 @@
     <p class="note">PCアプリの「タブレット用に書き出す」で作ったファイルを選んでください</p>
     <div id="lastWork" class="lastwork hidden"></div>
     <p id="startError" class="error hidden"></p>
+    <p class="note"><button class="btn small" data-open-settings>設定・エラー記録</button></p>
   </section>
 
   <!-- 作業画面 -->
@@ -64,6 +70,7 @@
       <div class="row tools">
         <button id="openOther" class="btn small">別のデータを開く</button>
         <button id="showMissing" class="btn small hidden">含まれない部材</button>
+        <button class="btn small" data-open-settings>設定</button>
       </div>
     </footer>
   </main>
@@ -74,6 +81,25 @@
       <p id="missingLead"></p>
       <ul id="missingList"></ul>
       <button id="missingClose" class="btn">閉じる</button>
+    </div>
+  </div>
+  <div id="settings" class="sheet hidden">
+    <div class="sheetbody">
+      <h2>設定</h2>
+      <p>アプリの版：<b id="appVersion"></b></p>
+      <p class="small muted">データはこの端末の中だけで扱い、どこにも送信しません。作業の状態はこの端末に自動で保存します。</p>
+      <h3>エラー記録</h3>
+      <p class="small muted">うまく動かないときは、この内容をコピーして開発担当に送ってください</p>
+      <textarea id="errorLog" class="errorlog" readonly></textarea>
+      <div class="row">
+        <button id="copyErrors" class="btn small">エラー記録をコピー</button>
+        <button id="clearErrors" class="btn small">エラー記録を消す</button>
+      </div>
+      <h3>保存した作業</h3>
+      <div class="row">
+        <button id="clearWork" class="btn small">この端末に保存した作業をすべて消す</button>
+      </div>
+      <button id="settingsClose" class="btn">閉じる</button>
     </div>
   </div>
   <div id="toast" class="toast hidden"></div>
