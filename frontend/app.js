@@ -108,13 +108,17 @@ let meshes = [];
 const matCache = new Map();
 const edgeMat = new THREE.LineBasicMaterial({ color: 0x37474f, clippingPlanes: clips, transparent: true, opacity: 0.45 });
 
+// 同じ高さで重なる面（梁天端とスラブ上面など）のちらつきを防ぐため、部材の種類で奥行きを少しずつずらす。
+// 数字が大きいほど奥に描く＝柱・梁が優先して見える
+const DEPTH_RANK = { 柱: 1, 梁: 2, 壁: 3, 階段: 3, 基礎: 3, その他: 3, スラブ: 4 };
+
 // depthWrite=false は透かしたスラブ用：下の部材を隠さず、白い三角のちらつきも出ない
-function surfaceMat(color, opacity = 1, depthWrite = true) {
-  const key = `${color}-${opacity}-${depthWrite}`;
+function surfaceMat(color, opacity = 1, depthWrite = true, rank = 1) {
+  const key = `${color}-${opacity}-${depthWrite}-${rank}`;
   if (!matCache.has(key)) {
     matCache.set(key, new THREE.MeshLambertMaterial({
       color, side: THREE.DoubleSide, clippingPlanes: clips, transparent: opacity < 1, opacity, depthWrite,
-      polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1,
+      polygonOffset: true, polygonOffsetFactor: rank, polygonOffsetUnits: rank * 4,
     }));
   }
   return matCache.get(key);
@@ -178,7 +182,8 @@ function paint() {
     else if (state.selected.has(u.member_id)) color = SELECT_COLOR;
     else if (dimOthers) { color = DIM_COLOR; opacity = 0.35; }
     const seeThrough = u.category === 'スラブ' && seeThroughSlab();
-    m.material = seeThrough ? surfaceMat(color, Math.min(opacity, 0.25), false) : surfaceMat(color, opacity);
+    const rank = DEPTH_RANK[u.category] ?? 3;
+    m.material = seeThrough ? surfaceMat(color, Math.min(opacity, 0.25), false, rank) : surfaceMat(color, opacity, true, rank);
     m.renderOrder = seeThrough ? 2 : 0; // 透明なスラブは他の部材の後に描く
   }
 }
@@ -342,7 +347,8 @@ function fit() {
   const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2, w = x1 - x0, h = y1 - y0;
   const aspect = viewport.clientWidth / viewport.clientHeight;
   const halfH = Math.max(h / 2, w / 2 / aspect) * 1.12;
-  Object.assign(planCam, { left: -halfH * aspect, right: halfH * aspect, top: halfH, bottom: -halfH, zoom: 1 });
+  Object.assign(planCam, { left: -halfH * aspect, right: halfH * aspect, top: halfH, bottom: -halfH, zoom: 1,
+    near: 1, far: state.meta.z_range[1] - state.meta.z_range[0] + 200 }); // カメラは最上部+100mにある
   planCam.position.set(cx, cy, state.meta.z_range[1] + 100);
   planCtl.target.set(cx, cy, 0);
   planCam.updateProjectionMatrix();
@@ -357,6 +363,11 @@ function aimPersp(reset = false) {
   const zc = (state.z0 + state.z1) / 2;
   if (reset) {
     perspCam.position.set(cx - span * 0.7, cy - span * 1.3, state.z1 + span * 0.9);
+    // 描画距離をモデルの大きさに合わせて絞る（広すぎると奥行きの精度が落ち、面がちらつく）
+    perspCam.near = Math.max(0.2, span / 500);
+    perspCam.far = span * 20;
+    perspCam.updateProjectionMatrix();
+    perspCtl.maxDistance = span * 8;
   } else {
     perspCam.position.z += zc - perspCtl.target.z;
   }
