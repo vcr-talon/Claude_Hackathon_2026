@@ -219,6 +219,20 @@ class UnitRequest(BaseModel):
 class UnitsRequest(BaseModel):
     units: list[UnitRequest]
     exclude_registered: bool = True
+    detail: bool = False  # 部材明細も返す（CSV書き出し用）
+
+
+def _unit_members(model: Model, r) -> list[dict]:
+    """区分の部材明細。体積は区分に入った部分（重複控除前）。未計算の立体は体積なしで理由を付ける。"""
+    rows = []
+    for (member_id, material), volume in sorted(r.member_volumes.items()):
+        m = model.members[member_id]
+        rows.append({"member_id": member_id, "name": m.name, "category": m.category, "storey": m.storey,
+                     "material": material, "volume": volume, "reason": None})
+    for s in r.uncomputed_solids:
+        rows.append({"member_id": s.member_id, "name": s.member_name, "category": s.category, "storey": s.storey,
+                     "material": s.material, "volume": None, "reason": s.error or "形状不備"})
+    return rows
 
 
 @app.post("/api/units")
@@ -228,7 +242,8 @@ def api_units(req: UnitsRequest):
     res = compute_units(model.solids, units, exclude_registered=req.exclude_registered)
     return {
         "units": [{"name": u.name, "total": r.total, "member_count": len(r.member_ids),
-                   "uncomputed_count": r.uncomputed} for u, r in zip(units, res.results)],
+                   "uncomputed_count": r.uncomputed, **({"members": _unit_members(model, r)} if req.detail else {})}
+                  for u, r in zip(units, res.results)],
         "sum_total": res.sum_total,
         "union_total": res.union_total,
         "overlaps": [{"a": o.a, "b": o.b, "volume": o.volume, "shared_volume": o.shared_volume,

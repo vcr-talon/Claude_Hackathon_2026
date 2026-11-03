@@ -1196,10 +1196,15 @@ function onUnitsChanged() {
   else if (state.result) renderResults(); // 「既存の区分に追加」の選択肢を更新
 }
 
-function partText(p) {
+// 条件の表示用の各項目（画面の行とCSVで共通）
+function partFields(p) {
   const filters = [p.categories ? p.categories.join('・') : null, p.member_ids ? `選択${p.member_ids.length}部材` : null,
     p.materials ? `材料：${p.materials.join('・')}` : null].filter(Boolean);
-  return `${p.rangeText}　${p.label ? zonesText([p.label]) : p.wholeName ?? 'フロア全体'}${filters.length ? `　絞り込み：${filters.join('／')}` : ''}`;
+  return { range: p.rangeText, zone: p.label ? zonesText([p.label]) : p.wholeName ?? 'フロア全体', filters: filters.join('／') };
+}
+function partText(p) {
+  const f = partFields(p);
+  return `${f.range}　${f.zone}${f.filters ? `　絞り込み：${f.filters}` : ''}`;
 }
 
 let unitSeq = 0;
@@ -1226,6 +1231,7 @@ function renderUnits() {
   const ur = state.unitResult;
   const overlapping = new Set((ur?.overlaps ?? []).filter((o) => o.members.length).flatMap((o) => [o.a, o.b]));
   $('unitHelp').classList.toggle('hidden', state.units.length > 0);
+  $('exportCsv').classList.toggle('hidden', !state.units.length);
   $('unitList').innerHTML = state.units.map((u, i) => {
     const res = ur?.units[i];
     const label = u.parts.find((p) => p.label)?.label;
@@ -1325,14 +1331,73 @@ function savePlan() {
     categories: [...state.categories], materials: [...state.materials], selected: [...state.selected], selectedOnly: state.selectedOnly,
     units: state.units,
   };
+  const name = `${state.meta.source.replace(/\.ifc$/i, '')}_工区割_${stamp()}.json`;
+  download(name, new Blob([JSON.stringify(plan, null, 1)], { type: 'application/json' }));
+  toast(`工区割を保存しました：${name}`, 'ok');
+}
+
+function stamp() {
   const d = new Date(), p = (n) => String(n).padStart(2, '0');
-  const stamp = `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}`;
+  return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}`;
+}
+function download(name, blob) {
   const a = document.createElement('a');
-  a.href = URL.createObjectURL(new Blob([JSON.stringify(plan, null, 1)], { type: 'application/json' }));
-  a.download = `${state.meta.source.replace(/\.ifc$/i, '')}_工区割_${stamp}.json`;
+  a.href = URL.createObjectURL(blob);
+  a.download = name;
   a.click();
-  URL.revokeObjectURL(a.href);
-  toast(`工区割を保存しました：${a.download}`, 'ok');
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+
+// ---------- CSV書き出し ----------
+// Excelでそのまま開けるよう、BOM付きUTF-8・CRLFにする
+const csvCell = (v) => {
+  const s = v === null || v === undefined ? '' : String(v);
+  return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+};
+const csvBlob = (rows) => new Blob(['﻿' + rows.map((r) => r.map(csvCell).join(',')).join('\r\n') + '\r\n'],
+  { type: 'text/csv' });
+const m3 = (v) => (v === null || v === undefined ? '' : v.toFixed(3));
+
+// 打設リスト（区分ごとの条件と数量）と部材明細の2ファイル。明細を求めるため計算し直す
+async function exportCsv() {
+  if (!state.units.length) return;
+  const res = await fetch('/api/units', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ units: state.units.map((u) => ({ name: u.name, parts: u.parts.map(partJson) })),
+      exclude_registered: state.excludeRegistered, detail: true }),
+  });
+  if (!res.ok) { toast(`CSVを書き出せません：${await errorDetail(res)}`, 'error'); return; }
+  const ur = await res.json();
+  if (ur.units.some((u) => !u.members)) { // 画面だけ新しく、計算サーバーが古いまま動いているとき
+    toast('CSVを書き出せません：計算サーバーが古いままです。start.bat を閉じて起動し直してください', 'error');
+    return;
+  }
+  const join = (u, key) => u.parts.map((p) => partFields(p)[key]).join(' ＋ ');
+  const list = [['区分', '区分名', '高さ範囲', '工区', '絞り込み', '数量（m3）', '部材数', '未計算（件）']];
+  state.units.forEach((u, i) => {
+    const r = ur.units[i];
+    list.push([i + 1, u.name, join(u, 'range'), join(u, 'zone'), join(u, 'filters'), m3(r.total), r.member_count, r.uncomputed_count]);
+  });
+  if (ur.overlaps.length) list.push(['区分の単純合計', '', '', '', '', m3(ur.sum_total), '', '']);
+  list.push(['合計（重複を除く）', '', '', '', '', m3(ur.union_total), '', '']);
+
+  const detail = [['区分', '区分名', '部材ID', '種別', '名称', '所属階', '材料', '体積（m3・区分内・重複控除前）', '備考']];
+  // 種別（柱→梁→壁→スラブ→…）、名称、所属階の順に並べる
+  const catOrder = Object.keys(CAT_COLORS);
+  const rank = (c) => (catOrder.includes(c) ? catOrder.indexOf(c) : catOrder.length);
+  const byKind = (a, b) => rank(a.category) - rank(b.category)
+    || String(a.name).localeCompare(String(b.name), 'ja', { numeric: true })
+    || String(a.storey).localeCompare(String(b.storey), 'ja', { numeric: true });
+  state.units.forEach((u, i) => {
+    for (const m of [...ur.units[i].members].sort(byKind)) {
+      detail.push([i + 1, u.name, m.member_id, m.category, m.name, m.storey, m.material, m3(m.volume),
+        m.reason ? `未計算：${m.reason}` : '']);
+    }
+  });
+  const base = `${state.meta.source.replace(/\.ifc$/i, '')}_${stamp()}`;
+  download(`${base}_打設リスト.csv`, csvBlob(list));
+  setTimeout(() => download(`${base}_部材明細.csv`, csvBlob(detail)), 300); // 2つ目の保存が抑止されないよう少し空ける
+  toast('CSVを書き出しました（打設リスト・部材明細）', 'ok');
 }
 
 function applyPlan(plan) {
@@ -1551,6 +1616,7 @@ $('unitList').addEventListener('input', (ev) => {
 $('clearSel').addEventListener('click', () => { state.selected.clear(); onSelectionChanged(); });
 $('selectedOnly').addEventListener('change', (ev) => { state.selectedOnly = ev.target.checked; paint(); scheduleCompute(); });
 $('savePlan').addEventListener('click', savePlan);
+$('exportCsv').addEventListener('click', () => exportCsv().catch((e) => toast(`CSVを書き出せません：${e.message}`, 'error')));
 $('planInput').addEventListener('change', (ev) => {
   if (ev.target.files[0]) openPlan(ev.target.files[0]);
   ev.target.value = ''; // 同じファイルをもう一度選べるように

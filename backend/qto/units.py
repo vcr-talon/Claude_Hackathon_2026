@@ -58,6 +58,9 @@ class UnitTotal:
     total: float
     member_ids: set[str] = field(default_factory=set)
     uncomputed: int = 0
+    # 部材明細：(部材ID, 材料) → 区分に入った体積（重複控除前）と、未計算の立体
+    member_volumes: dict[tuple[str, str], float] = field(default_factory=dict)
+    uncomputed_solids: list[Solid] = field(default_factory=list)
 
 
 @dataclass
@@ -173,14 +176,17 @@ def _unit_total(solids: list[Solid], parts: list[PourUnit], exclude_parts: list[
             continue
         if s.manifold is None:
             result.uncomputed += 1
+            result.uncomputed_solids.append(s)
             continue
         piece = m3.Manifold.batch_boolean([s.manifold, c], m3.OpType.Intersect)
         e = cut(s) if cut is not None else None
         if e is not None:
             piece = m3.Manifold.batch_boolean([piece, e], m3.OpType.Subtract)
-        if piece.volume() > EPS_VOLUME:
+        if (v := piece.volume()) > EPS_VOLUME:
             pieces.append(piece)
             result.member_ids.add(s.member_id)
+            k = (s.member_id, s.material)
+            result.member_volumes[k] = result.member_volumes.get(k, 0.0) + v
     result.total = _union(pieces).volume() if pieces else 0.0
     return result, pieces
 

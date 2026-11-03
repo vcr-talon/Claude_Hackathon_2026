@@ -143,6 +143,19 @@ def test_material_filter():
     assert r.total == pytest.approx(0.1, rel=1e-6)
 
 
+def test_unit_member_volumes_for_csv():
+    # 部材明細は区分に入った部分の体積（重複控除前）。差し引かれた部分は入らない
+    col = box_solid((0, 0, 0), (1, 1, 1), key="c", category="柱")
+    slab = box_solid((0, 0, 0.8), (2, 1, 1), key="s", category="スラブ")
+    a = PourUnit("A", 0, 1, region=box(-1, -1, 1.5, 2))
+    b = PourUnit("B", 0, 1)
+    res = compute_units([col, slab], [a, b], exclude_registered=True)
+    va = res.results[0].member_volumes
+    assert va[("c", "コンクリート")] == pytest.approx(1.0, rel=REL)
+    assert va[("s", "コンクリート")] == pytest.approx(0.3, rel=REL)
+    assert res.results[1].member_volumes == {("s", "コンクリート"): pytest.approx(0.1, rel=REL)}
+
+
 def test_region_from_rings_keeps_holes():
     outer = [[0, 0], [4, 0], [4, 4], [0, 4], [0, 0]]
     hole = [[1, 1], [3, 1], [3, 3], [1, 3], [1, 1]]
