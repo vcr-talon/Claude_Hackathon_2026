@@ -109,8 +109,9 @@ const matCache = new Map();
 const edgeMat = new THREE.LineBasicMaterial({ color: 0x37474f, clippingPlanes: clips, transparent: true, opacity: 0.45 });
 
 // 同じ高さで重なる面（梁天端とスラブ上面など）のちらつきを防ぐため、部材の種類で奥行きを少しずつずらす。
-// 数字が大きいほど奥に描く＝柱・梁が優先して見える
-const DEPTH_RANK = { 柱: 1, 梁: 2, 壁: 3, 階段: 3, 基礎: 3, その他: 3, スラブ: 4 };
+// 数字が大きいほど奥に描く。スラブを最優先にし、スラブ上面と同じ高さかわずかに下の梁・柱の天端は隠す
+// （梁を優先すると、モデル上1mm未満だけ低い梁天端がスラブを突き抜けて点状に見える）
+const DEPTH_RANK = { スラブ: 1, 柱: 2, 梁: 3, 壁: 4, 階段: 4, 基礎: 4, その他: 4 };
 
 // depthWrite=false は透かしたスラブ用：下の部材を隠さず、白い三角のちらつきも出ない
 function surfaceMat(color, opacity = 1, depthWrite = true, rank = 1) {
@@ -118,7 +119,9 @@ function surfaceMat(color, opacity = 1, depthWrite = true, rank = 1) {
   if (!matCache.has(key)) {
     matCache.set(key, new THREE.MeshLambertMaterial({
       color, side: THREE.DoubleSide, clippingPlanes: clips, transparent: opacity < 1, opacity, depthWrite,
-      polygonOffset: true, polygonOffsetFactor: rank, polygonOffsetUnits: rank * 4,
+      // 傾きに比例する量（factor）は全部材で同じにする。順位で変えると浅い角度で大きくずれ、
+      // スラブのすぐ下の梁天端がスラブを突き抜けて点状に見えるため。順位の差は一定の微小量（units）だけ
+      polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: rank * 2,
     }));
   }
   return matCache.get(key);
