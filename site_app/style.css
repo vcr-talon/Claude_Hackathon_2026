@@ -106,9 +106,12 @@ input[type=number] { font: inherit; font-size: 20px; width: 110px; min-height: 4
 .sheetbody { background: #fff; border-radius: 12px; padding: 16px 20px; max-width: 560px; width: 100%; max-height: 80vh; overflow-y: auto; }
 .sheetbody h2 { font-size: 19px; margin: 0 0 8px; }
 .historylist { list-style: none; padding: 0; margin: 8px 0; max-height: 50vh; overflow-y: auto; border-top: 1px solid var(--line); }
-.historylist li { padding: 8px 2px; border-bottom: 1px solid var(--line); font-size: 15px; }
-.historylist .time { color: var(--muted); font-variant-numeric: tabular-nums; margin-right: 8px; }
-.historylist .rest { float: right; font-weight: bold; font-variant-numeric: tabular-nums; color: var(--text); font-size: 15px; }
+.historylist li { display: grid; grid-template-columns: auto 1fr auto; gap: 12px; align-items: baseline; padding: 8px 2px; border-bottom: 1px solid var(--line); font-size: 15px; }
+.historylist .time { color: var(--muted); font-variant-numeric: tabular-nums; }
+.historylist .rest { font-weight: bold; font-variant-numeric: tabular-nums; color: var(--text); font-size: 15px; white-space: nowrap; text-align: right; }
+.historylist li.none { display: block; color: var(--muted); }
+.historylist .depth { white-space: nowrap; }
+.depthhead { font-weight: bold; margin: 8px 0 0; }
 .sheetbody h3 { font-size: 16px; margin: 16px 0 4px; }
 .errorlog { width: 100%; height: 120px; font: 13px/1.4 ui-monospace, monospace; border: 1px solid var(--line); border-radius: 8px; padding: 6px; }
 .toast { position: fixed; left: 50%; top: 16px; transform: translateX(-50%); z-index: 30; max-width: 90%;

@@ -2,7 +2,7 @@
 import { fmt, fullVolume, parseSiteData, presetMm, totals, remaining, truckPlan } from './calc.js';
 import { STATUS_NAME, recordCsv, stamp, zoneKeyOf, zoneTitle } from './record.js';
 
-const APP_VERSION = '1.4.0'; // sw.js の VERSION と合わせる（キャッシュで古い版が動いていないか確かめる用）
+const APP_VERSION = '1.4.1'; // sw.js の VERSION と合わせる（キャッシュで古い版が動いていないか確かめる用）
 const $ = (id) => document.getElementById(id);
 const SVGNS = 'http://www.w3.org/2000/svg';
 const CAT_COLORS = { 柱: '#c62828', 梁: '#ef6c00', 壁: '#0288d1', スラブ: '#a0a4a8', 基礎: '#6d4c41', 階段: '#6a1b9a', その他: '#546e7a' };
@@ -65,7 +65,7 @@ function undo() {
   if (!prev) return;
   Object.assign(work, prev);
   if (editId && statusOf(editId) !== 'pouring') editId = null; // 戻した結果、打設中でなくなったら入力を終える
-  logEvent('元に戻す', []);
+  logEvent('元に戻す（直前の操作を取り消し）', []);
   save();
   syncInputs();
   updateCells();
@@ -153,12 +153,30 @@ function centroid(ring) {
   return [pts.reduce((a, p) => a + p[0], 0) / pts.length, pts.reduce((a, p) => a + p[1], 0) / pts.length];
 }
 
+// 通り芯（直線）を枠の中に収まる区間にする。枠に掛からなければ null（Liang–Barsky）
+function clipToFrame([sx, sy], [ex, ey], [fx0, fy0, fx1, fy1]) {
+  const dx = ex - sx, dy = ey - sy;
+  let t0 = -Infinity, t1 = Infinity; // 線を両側に延ばしてから枠で切る
+  for (const [p, q] of [[-dx, sx - fx0], [dx, fx1 - sx], [-dy, sy - fy0], [dy, fy1 - sy]]) {
+    if (Math.abs(p) < 1e-12) { if (q < 0) return null; continue; }
+    const t = q / p;
+    if (p < 0) t0 = Math.max(t0, t); else t1 = Math.min(t1, t);
+  }
+  if (!(t0 < t1)) return null;
+  return [[sx + dx * t0, sy + dy * t0], [sx + dx * t1, sy + dy * t1]];
+}
+
 function buildPlan() {
   const svg = $('plan');
   svg.replaceChildren();
   const [x0, y0, x1, y1] = data.bounds;
-  const size = Math.max(x1 - x0, y1 - y0), m = size * 0.06 + 2;
-  home = [x0 - m, -y1 - m, x1 - x0 + 2 * m, y1 - y0 + 2 * m];
+  const size = Math.max(x1 - x0, y1 - y0), m = size * 0.02 + 1;
+  // 通り芯は建物のすぐ外までで切り、丸印（X1 などの記号）をそこに置く。全体表示は丸印まで入る範囲にする
+  const r = size * 0.012, pad = size * 0.03;
+  const frame = [x0 - pad, y0 - pad, x1 + pad, y1 + pad];
+  const out = pad + r * 2.6;
+  const h = y1 - y0 + 2 * (out + m), legend = h * 0.12; // 下に重なる凡例の分だけ下側を空ける
+  home = [x0 - out - m, -y1 - out - m, x1 - x0 + 2 * (out + m), h + legend];
   setViewBox(home);
 
   // 部材の位置（外接矩形）を種別ごとに1本のパスで薄く描く
@@ -192,9 +210,10 @@ function buildPlan() {
 
   // 通り芯と記号
   const grid = el('g', { class: 'grid' });
-  const r = size * 0.012;
   for (const g of data.grids ?? []) {
-    const [sx, sy] = g.start, [ex, ey] = g.end, len = Math.hypot(ex - sx, ey - sy) || 1;
+    const seg = clipToFrame(g.start, g.end, frame);
+    if (!seg) continue;
+    const [[sx, sy], [ex, ey]] = seg, len = Math.hypot(ex - sx, ey - sy) || 1;
     const ux = (ex - sx) / len, uy = (ey - sy) / len;
     grid.appendChild(el('line', { x1: sx, y1: -sy, x2: ex, y2: -ey }));
     for (const [px, py] of [[sx - ux * r * 1.4, sy - uy * r * 1.4], [ex + ux * r * 1.4, ey + uy * r * 1.4]]) {
@@ -285,13 +304,13 @@ function render() {
   $('undo').disabled = !work.undo.length;
   const topName = (data.storeys ?? []).find((s) => Math.abs(s.elevation - data.z1) < 0.005)?.name;
   const edit = editId && cellEls.get(editId)?.cell;
-  $('depthLabel').textContent = edit ? `${edit.label} だけの打ち上がり：コン天 −` : '柱・梁の打ち上がり：コン天 −';
+  $('depthLabel').textContent = edit ? `選んだスパン（${edit.label}）だけの打設済み高さ` : '柱・梁の打設済み高さ';
   $('ownBox').classList.toggle('hidden', !edit);
+  const top = `コン天＝${topName ?? '高さ範囲の上端'}。0 mm＝コン天まで打設済み`;
   $('depthNote').textContent = edit
-    ? `このスパンだけの高さです（共通の ${work.depth.toLocaleString('ja-JP')} mm より優先）。コン天＝${topName ?? '高さ範囲の上端'}`
-    : `コン天＝${topName ?? '高さ範囲の上端'}の高さ。0 mm なら天端まで打ち上がり。` +
-      (pouring ? 'この高さは、今打っているスパン（オレンジ）の柱・梁にだけ効きます（打設中が複数なら全部に同じ値。長押ししたスパンはそのスパンの値）'
-        : '今打っているスパンがありません（スパンをタップすると打設中になります）');
+    ? `${top}。ほかの打設中のスパンは共通の ${work.depth.toLocaleString('ja-JP')} mm のまま`
+    : `${top}。` + (pouring ? '今打っているスパン（オレンジ）の柱・梁にだけ効きます（長押ししたスパンはそのスパンの値）'
+      : '今打っているスパンがありません（スパンをタップすると打設中になります）');
 }
 
 // 長押し：そのスパンを打設中にして、下段の打ち上がりをそのスパンだけの値にする
@@ -314,7 +333,7 @@ function endOwnDepth(resetToCommon) {
   if (resetToCommon && editId && work.cellDepth[editId] !== undefined) {
     pushUndo();
     delete work.cellDepth[editId];
-    logEvent('そのスパンの高さを共通の値に戻す', [editId], work.depth);
+    logEvent('そのスパンの高さを共通に戻す', [editId], work.depth);
     save();
   }
   editId = null;
@@ -504,7 +523,7 @@ function applyPreset(kind) {
   }
   pushUndo();
   setDepth(mm);
-  logEvent(`打ち上がり：${PRESET_NAME[kind]}`, depthTargets(), mm);
+  logEvent(`打設済み高さ：${PRESET_NAME[kind]}`, depthTargets(), mm);
   syncInputs();
   save();
   updateCells();
@@ -538,7 +557,7 @@ async function copyErrors() {
   }
 }
 function clearWork() {
-  if (!confirm('この端末に保存した作業（スパンの状態・入力値）をすべて消します。よろしいですか？')) return;
+  if (!confirm('この端末に保存した作業（スパンの状態・入力値・打設の記録）をすべて消します。よろしいですか？')) return;
   try {
     Object.keys(localStorage).filter((k) => k.startsWith(STORE) || k === LAST).forEach((k) => localStorage.removeItem(k));
   } catch { /* 保存できない環境 */ }
@@ -548,12 +567,14 @@ function clearWork() {
 }
 
 // ---------- 記録の画面と共有 ----------
+const depthText = (mm) => (mm ? `コン天から ${mm.toLocaleString('ja-JP')} mm` : 'コン天まで');
 function openHistory() {
   const list = $('historyList');
   list.replaceChildren();
   const items = [...work.log].reverse();
   if (!items.length) {
     const li = document.createElement('li');
+    li.className = 'none';
     li.textContent = 'まだ記録はありません（スパンをタップすると残ります）';
     list.appendChild(li);
   }
@@ -565,9 +586,16 @@ function openHistory() {
     const rest = document.createElement('span');
     rest.className = 'rest';
     rest.textContent = `残り ${fmt(e.remaining)} m³`;
-    const what = [e.zone, e.action, e.spans.length > 3 ? `${e.spans.length} スパン` : e.spans.join('・'),
-      e.depthMm !== undefined && e.depthMm !== null ? `コン天 −${e.depthMm} mm` : ''].filter(Boolean).join('　');
-    li.append(time, rest, document.createTextNode(what));
+    const what = [e.zone, e.action, e.spans.length > 3 ? `${e.spans.length} スパン` : e.spans.join('・')].filter(Boolean).join('　');
+    const body = document.createElement('span');
+    body.textContent = what;
+    if (e.depthMm !== undefined && e.depthMm !== null) {
+      const dep = document.createElement('span');
+      dep.className = 'depth';
+      dep.textContent = depthText(e.depthMm);
+      body.append('　', dep);
+    }
+    li.append(time, body, rest);
     list.appendChild(li);
   }
   $('history').classList.remove('hidden');
@@ -593,7 +621,7 @@ async function shareRecord() {
   a.download = name;
   a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 1000);
-  toast('記録をファイルに保存しました');
+  toast('記録をこの端末のダウンロードに保存しました');
 }
 
 // ---------- 起動 ----------
@@ -615,7 +643,7 @@ $('bulk').addEventListener('click', () => {
 });
 bindNumber('depth', 'depth');
 $('depth').addEventListener('change', () => { // 入力を終えたときに1件だけ記録する（1文字ごとには残さない）
-  logEvent('打ち上がり：数値で入力', depthTargets(), Math.max(0, Number($('depth').value) || 0));
+  logEvent('打設済み高さ：数値で入力', depthTargets(), Math.max(0, Number($('depth').value) || 0));
   save();
 });
 bindNumber('truck', 'truck');

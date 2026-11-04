@@ -34,12 +34,12 @@ export function recordCsv(data, work, { statusOf, depthOf, now = new Date().toIS
     ['作成', stamp(now)],
     [],
     ['履歴（古い順）'],
-    ['時刻', '工区', '操作', 'スパン', '打ち上がり（コン天−mm）', '残り（m3）'],
+    ['時刻', '工区', '操作', 'スパン', '打設済み高さ（コン天からmm）', '残り（m3）'],
     ...(work.log ?? []).map((e) => [stamp(e.at), e.zone ?? '', e.action, (e.spans ?? []).join('・'),
       e.depthMm ?? '', m3(e.remaining)]),
     [],
     ['スパンごとの最終状態'],
-    ['工区', 'スパン', '状態', '打ち上がり（コン天−mm）', '残り（m3）', '全量（m3）'],
+    ['工区', 'スパン', '状態', '打設済み高さ（コン天からmm）', '残り（m3）', '全量（m3）'],
   ];
   for (const c of data.cells) {
     const full = fullVolume(c);

@@ -615,7 +615,7 @@ async function runRemain() {
     const v = await remainVolume(ids, depth);
     if (seq !== remainSeq) return;
     const t = truckPlan(v);
-    $('remainResult').innerHTML = `<div class="muted">残り ${ids.length} スパン・柱梁はコン天 −${depth.toLocaleString('ja-JP')} mm まで打設済み</div>` +
+    $('remainResult').innerHTML = `<div class="muted">残り ${ids.length} スパン・柱・梁は${depth ? `コン天から ${depth.toLocaleString('ja-JP')} mm 下` : 'コン天'}まで打設済み</div>` +
       `<div class="total">${fmt(v)} m³</div>` + (t.extra ? `<div class="muted">割増 ${t.extra}% 込み ${fmt(t.need)} m³</div>` : '') +
       `<div class="trucks">${t.extra ? '発注の目安：' : '発注の目安（割増なし）：'}${t.text}</div>`;
   } catch (e) {
@@ -635,7 +635,7 @@ async function exportRemainCsv() {
   const rows = order.map((_, k) => order.slice(k)); // 残り n, n-1, ..., 1 スパン
   const vols = await Promise.all(rows.flatMap((ids) => levels.map(([, d]) => remainVolume(ids, d))));
   const head = ['残りのスパン数', '残りのスパン（打設順）'];
-  for (const [name, d] of levels) head.push(`${name}：コン天−${d}mm（m3）`, `${name}：生コン車`);
+  for (const [name, d] of levels) head.push(`${name}：コン天から${d}mm（m3）`, `${name}：生コン車`);
   const out = [head];
   rows.forEach((ids, r) => {
     const row = [ids.length, ids.map((id) => cellById(id).label).join(' → ')];

@@ -21,7 +21,7 @@
     <p class="note">PCアプリの「タブレット用に書き出す」で作ったファイルを選んでください</p>
     <div id="lastWork" class="lastwork hidden"></div>
     <p id="startError" class="error hidden"></p>
-    <p class="note"><button class="btn small" data-open-settings>設定・不具合の記録</button></p>
+    <p class="note"><button class="btn small" data-open-settings>設定・エラーの記録</button></p>
   </section>
 
   <!-- 作業画面 -->
@@ -51,15 +51,16 @@
     </div>
 
     <footer class="controls">
-      <div class="taphint">スパンをタップ：1回＝打設中　2回＝打設済み　3回＝未打設に戻す　長押し＝そのスパンだけ高さを変える<br>
+      <div class="taphint">スパンをタップ：1回＝打設中　2回＝打設済み　3回＝未打設　長押し＝打設中にして高さを個別に変える<br>
         <span class="small muted">幅2m未満の細いスパンは数字を省略しています（量は合計に入っています）</span></div>
+      <div class="depthhead" id="depthLabel">柱・梁の打設済み高さ</div>
       <div class="row">
-        <label for="depth" id="depthLabel">柱・梁の打ち上がり：コン天 −</label>
+        <label for="depth">コン天から</label>
         <input id="depth" type="number" inputmode="numeric" min="0" step="10" value="0"><span>mm</span>
       </div>
       <div id="ownBox" class="row hidden">
-        <button id="ownReset" class="btn small">共通の値に戻す</button>
-        <button id="ownClose" class="btn small">閉じる</button>
+        <button id="ownClose" class="btn small">この高さで閉じる</button>
+        <button id="ownReset" class="btn small">共通の高さに戻す</button>
       </div>
       <div id="depthNote" class="small muted"></div>
       <div class="presetcap">目安を入れる（打設中のスパンの値。押すと上の欄に入ります）</div>
@@ -75,7 +76,7 @@
         <input id="extra" type="number" inputmode="decimal" min="0" step="1"><span>%</span>
       </div>
       <div class="row tools">
-        <button id="openHistory" class="btn small">記録</button>
+        <button id="openHistory" class="btn small">打設の記録</button>
         <button id="openOther" class="btn small">別のデータを開く</button>
         <button id="showMissing" class="btn small hidden">含まれない部材</button>
         <button class="btn small" data-open-settings>設定</button>
@@ -94,7 +95,7 @@
   <div id="history" class="sheet hidden">
     <div class="sheetbody">
       <h2>打設の記録</h2>
-      <p class="small muted">新しい順。「記録を共有」で、この記録とスパンごとの最終状態を表（CSV）にして送れます</p>
+      <p class="small muted">新しい順。「記録を共有」で、この記録とスパンごとの最終状態をExcelで開ける表にして、メールやLINEなどで送れます</p>
       <ol id="historyList" class="historylist"></ol>
       <div class="row">
         <button id="shareRecord" class="btn">記録を共有</button>
@@ -107,16 +108,16 @@
       <h2>設定</h2>
       <p>アプリの版：<b id="appVersion"></b></p>
       <p class="small muted">データはこの端末の中だけで扱い、自動で保存します</p>
-      <h3>不具合の記録</h3>
+      <h3>エラーの記録（担当者に送る用）</h3>
       <p class="small muted">うまく動かないときは、この内容をコピーして担当者に送ってください</p>
       <textarea id="errorLog" class="errorlog" readonly></textarea>
       <div class="row">
-        <button id="copyErrors" class="btn small">記録をコピー</button>
-        <button id="clearErrors" class="btn small">記録を消す</button>
+        <button id="copyErrors" class="btn small">エラーの記録をコピー</button>
+        <button id="clearErrors" class="btn small">エラーの記録を消す</button>
       </div>
       <h3>保存した作業</h3>
       <div class="row">
-        <button id="clearWork" class="btn small">この端末に保存した作業をすべて消す</button>
+        <button id="clearWork" class="btn small">この端末に保存した作業をすべて消す（打設の記録も消えます）</button>
       </div>
       <button id="settingsClose" class="btn">閉じる</button>
     </div>

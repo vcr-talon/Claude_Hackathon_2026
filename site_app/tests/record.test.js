@@ -30,7 +30,7 @@ test('Excel で開けるよう BOM 付き・CRLF', () => {
 test('履歴は古い順に、時刻・工区・操作・スパン・打ち上がり・残り', () => {
   const lines = csv().slice(1).split('\r\n');
   const i = lines.indexOf('履歴（古い順）');
-  assert.equal(lines[i + 1], '時刻,工区,操作,スパン,打ち上がり（コン天−mm）,残り（m3）');
+  assert.equal(lines[i + 1], '時刻,工区,操作,スパン,打設済み高さ（コン天からmm）,残り（m3）');
   assert.equal(lines[i + 2], `${stamp(WORK.log[0].at)},A工区,打設中,X1〜X2×Y1〜Y2（A）,0,6.500`);
   assert.equal(lines[i + 3], `${stamp(WORK.log[1].at)},A工区,打設済み,X1〜X2×Y1〜Y2（A）,,4.000`);
 });
