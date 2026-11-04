@@ -46,6 +46,21 @@ class Solid:
     def mesh_volume(self) -> float:
         return mesh_volume(self.vertices, self.faces)
 
+    @property
+    def reference_volume(self) -> float | None:
+        """閉じた立体にできなかった形の参考体積（総数量には含めない）。
+
+        面の向きをそろえてから表面で計算する。部材を囲む箱の体積を超えるときは
+        あてにならないため None（画面では「形状が壊れているため参考体積なし」）。
+        """
+        v, f = _weld(self.vertices, self.faces)
+        if len(f) == 0:
+            return None
+        vol = mesh_volume(v, _orient_faces(f))
+        b = np.asarray(self.bbox if self.bbox else (*self.vertices.min(axis=0), *self.vertices.max(axis=0)))
+        box_volume = float(np.prod(b[3:] - b[:3]))
+        return vol if vol <= box_volume * (1 + 1e-6) else None
+
 
 def mesh_volume(vertices: np.ndarray, faces: np.ndarray) -> float:
     """発散定理による体積。閉じていない形状では参考値にしかならない。"""
@@ -70,20 +85,101 @@ def _weld(vertices: np.ndarray, faces: np.ndarray) -> tuple[np.ndarray, np.ndarr
     return vertices[first], new_faces[ok]
 
 
+def _edges(faces: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """向きを無視した辺と、その辺を持つ面の数。"""
+    e = np.sort(np.concatenate([faces[:, [0, 1]], faces[:, [1, 2]], faces[:, [2, 0]]]), axis=1)
+    return np.unique(e, axis=0, return_counts=True)
+
+
+def _split_t_junctions(vertices: np.ndarray, faces: np.ndarray, rounds: int = 10) -> np.ndarray:
+    """辺の分け方の食い違い（T字の継ぎ目）を直す。
+
+    片側の面が1本で持つ辺を、反対側の面が途中の頂点で分けて持っているとき、
+    1本の側の三角形をその頂点で分け直す。頂点は増やさず、形も変えない（面のつなぎ方だけ）。
+    """
+    for _ in range(rounds):
+        edges, counts = _edges(faces)
+        open_edges = {tuple(e) for e in edges[counts == 1]}
+        if not open_edges:
+            break
+        cand = np.array(sorted({i for e in open_edges for i in e}))
+        new, changed = [], False
+        for tri in faces:
+            pieces = [tuple(tri)]
+            for k in range(3):
+                a, b = tri[k], tri[(k + 1) % 3]
+                if (min(a, b), max(a, b)) not in open_edges:
+                    continue
+                ab = vertices[b] - vertices[a]
+                t = ((vertices[cand] - vertices[a]) @ ab) / (ab @ ab)
+                d = np.linalg.norm(vertices[a] + np.outer(t, ab) - vertices[cand], axis=1)
+                inner = (t > 1e-9) & (t < 1 - 1e-9) & (d < WELD_TOLERANCE)
+                if not inner.any():
+                    continue
+                chain = [a, *cand[inner][np.argsort(t[inner])], b]
+                c = tri[(k + 2) % 3]
+                pieces = [(chain[i], chain[i + 1], c) for i in range(len(chain) - 1)]
+                changed = True
+                break  # 1つの三角形は1辺ずつ（残りの辺は次の回で）
+            new.extend(pieces)
+        faces = np.array(new, dtype=np.int64)
+        if not changed:
+            break
+    return faces
+
+
+def _orient_faces(faces: np.ndarray) -> np.ndarray:
+    """面の向きをそろえる（隣り合う面が辺を逆向きに共有するように）。裏返った面だけを直す。"""
+    faces = faces.copy()
+    edge_faces: dict[tuple[int, int], list[int]] = {}
+    for i, t in enumerate(faces):
+        for k in range(3):
+            a, b = int(t[k]), int(t[(k + 1) % 3])
+            edge_faces.setdefault((min(a, b), max(a, b)), []).append(i)
+    seen = np.zeros(len(faces), bool)
+    for start in range(len(faces)):
+        if seen[start]:
+            continue
+        seen[start] = True
+        queue = [start]
+        while queue:
+            i = queue.pop()
+            t = faces[i]
+            for k in range(3):
+                a, b = int(t[k]), int(t[(k + 1) % 3])
+                for j in edge_faces[(min(a, b), max(a, b))]:
+                    if seen[j]:
+                        continue
+                    u = faces[j]
+                    if any(u[m] == a and u[(m + 1) % 3] == b for m in range(3)):  # 同じ向き＝裏返り
+                        faces[j] = u[::-1]
+                    seen[j] = True
+                    queue.append(j)
+    return faces
+
+
 def build_manifold(vertices: np.ndarray, faces: np.ndarray) -> tuple[m3.Manifold | None, str | None]:
-    """閉じた立体に変換する。直らない場合は (None, 理由) を返す。"""
+    """閉じた立体に変換する。直らない場合は (None, 理由) を返す。
+
+    1. そのまま　2. 近い頂点を結合　3. さらに辺の分け方の食い違いと裏返った面を直す。
+    3 は面のつなぎ方と向きだけを直し、穴を埋めたり形を推測したりはしない（D4）。
+    念のため、直した体積が部材を囲む箱を超えるときは採用しない。
+    """
     if len(faces) < 4:
         return None, "形状データが空または不足"
-    attempts = [(vertices, faces), _weld(vertices, faces)]
-    status = None
+    welded = _weld(vertices, faces)
+    attempts = [(vertices, faces), welded]
+    if len(welded[1]) >= 4:
+        attempts.append((welded[0], _orient_faces(_split_t_junctions(*welded))))
+    box_volume = float(np.prod(vertices.max(axis=0) - vertices.min(axis=0)))
     for verts, tris in attempts:
         man = _to_manifold(verts, tris)
-        status = man.status()
-        if status == m3.Error.NoError and not man.is_empty():
+        if man.status() == m3.Error.NoError and not man.is_empty():
             if man.volume() < 0:  # 面の向きが裏返っている
                 man = _to_manifold(verts, tris[:, ::-1])
-            return man, None
-    return None, f"閉じた立体にできない形状（{status.name}）"
+            if man.volume() <= box_volume * (1 + 1e-6):
+                return man, None
+    return None, "形のデータが閉じていない（面の抜けなど）ため、切って数えられない"
 
 
 def region_prism(region: BaseGeometry, z0: float, z1: float) -> m3.Manifold:
@@ -140,7 +236,7 @@ class Uncomputed:
     category: str
     key: str
     reason: str
-    reference_volume: float  # 立体全体の参考体積（総数量には含めない）
+    reference_volume: float | None  # 立体全体の参考体積（総数量には含めない）。あてにならないときは None
 
 
 @dataclass
@@ -211,7 +307,7 @@ def compute(solids: list[Solid], z0: float, z1: float, region: BaseGeometry | No
     for s in candidates:
         if s.manifold is None:
             uncomputed.append(Uncomputed(s.member_id, s.member_name, s.category, s.key,
-                                         s.error or "不明", s.mesh_volume))
+                                         s.error or "不明", s.reference_volume))
             continue
         xmin, ymin, zmin, xmax, ymax, zmax = s.bbox
         if z0 <= zmin and zmax <= z1 and region_prep.contains(box(xmin, ymin, xmax, ymax)):

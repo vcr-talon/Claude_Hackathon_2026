@@ -1365,9 +1365,13 @@ function renderResults() {
     }
     html += '</table>';
     if (z.uncomputed.length) {
-      const ref = z.uncomputed.reduce((a, u) => a + (u.reference_volume || 0), 0);
-      html += `<details><summary class="warn">⚠ 未計算 ${z.uncomputed.length} 件（参考体積 ${fmt(ref)} m³・総数量に含まず）</summary><table class="mini">` +
-        z.uncomputed.map((u) => `<tr><td>${esc(u.category)} ${esc(u.name)}</td><td>${esc(u.reason)}</td></tr>`).join('') + '</table></details>';
+      // 参考体積が外形の箱を超える部材（形状が壊れていて、あてにならない）は合計に入れず、件数を添える
+      const ref = z.uncomputed.reduce((a, u) => a + (u.reference_volume ?? 0), 0);
+      const noRef = z.uncomputed.filter((u) => u.reference_volume == null).length;
+      const refTxt = `参考体積 ${fmt(ref)} m³${noRef ? `、${noRef} 件は形状が壊れているため参考体積なし` : ''}`;
+      html += `<details><summary class="warn">⚠ 未計算 ${z.uncomputed.length} 件（${refTxt}・総数量に含まず）</summary><table class="mini">` +
+        z.uncomputed.map((u) => `<tr><td>${esc(u.category)} ${esc(u.name)}</td><td>${esc(u.reason)}</td>` +
+          `<td class="num">${u.reference_volume == null ? '形状が壊れているため参考体積なし' : `参考 ${fmt(u.reference_volume)} m³`}</td></tr>`).join('') + '</table></details>';
     }
     html += `<details class="basis"><summary>根拠を見る</summary>` +
       `<div class="muted">対象 ${z.members.length} 部材　重複控除 ${fmt(z.overlap)} m³（単純合計 ${fmt(z.raw_sum)}）</div>`;

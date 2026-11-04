@@ -63,7 +63,7 @@ def _rings(geom) -> list[list[list[list[float]]]]:
 
 def model_meta(model: Model) -> dict:
     uncomputed = [{"key": s.key, "member_id": s.member_id, "name": s.member_name, "category": s.category,
-                   "material": s.material, "reason": s.error, "reference_volume": s.mesh_volume}
+                   "material": s.material, "reason": s.error, "reference_volume": s.reference_volume}
                   for s in model.solids if s.manifold is None]
     uncomputed += [{"key": s.key, "member_id": s.member_id, "name": s.name, "category": None,
                     "material": s.material, "reason": s.reason, "reference_volume": None} for s in model.skipped]

@@ -18,7 +18,7 @@ description: 数量を毎回同じ手順で検証して docs/verification.md に
    ```
    .venv\Scripts\python.exe backend\scripts\quick_check.py
    ```
-   - 見るところ：「基準値と一致（±0.01 m³）：全体 ○○ m³、5SL～6SL ○○ m³」。ずれていれば終了コード1で「全体 4377.07 → ○○」と出る
+   - 見るところ：「基準値と一致（±0.01 m³）：全体 ○○ m³、5SL～6SL ○○ m³」。ずれていれば終了コード1で「全体 4381.88 → ○○」と出る
 3. 実モデルの通し（検証表②③）
    ```
    .venv\Scripts\python.exe backend\scripts\check_model.py
@@ -43,7 +43,7 @@ description: 数量を毎回同じ手順で検証して docs/verification.md に
 
 ## 合格条件
 - 検証表①②の許容値内（①相対誤差 1e-6、②0.001 m³）
-- 基準値（全体 4377.07 / 5SL～6SL 372.90）と 0.01 m³ 以内
+- 基準値（全体 4381.88 / 5SL～6SL 372.90）と 0.01 m³ 以内
 - タブレット書き出しの確認がすべて合格
 
 ## 失敗したら

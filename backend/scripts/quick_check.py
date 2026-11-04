@@ -20,7 +20,8 @@ ROOT = Path(__file__).resolve().parents[2]
 IFC = ROOT / "hackathon_model.ifc"
 TOLERANCE = 0.01  # m³
 # 基準値（CLAUDE.md「許容値と基準値」）。数字を合わせるためにここを変えない。変えるなら先に確認を求める
-EXPECTED = {"全体": 4377.07, "5SL～6SL": 372.90}
+# 2026-11-04 全体 4377.07 → 4381.88：辺の食い違い・裏返った面を直して2件（FG10・W3）を数えるようにした（利用者承認済み）
+EXPECTED = {"全体": 4381.88, "5SL～6SL": 372.90}
 
 
 def main() -> int:

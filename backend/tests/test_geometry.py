@@ -96,6 +96,45 @@ def test_inside_out_shape_is_repaired():
     assert r.total == pytest.approx(1.0, rel=REL)
 
 
+def test_some_flipped_faces_are_repaired():
+    """一部の面だけが裏返っている形（IFCの書き出しで実際にある）は、向きをそろえて数える。"""
+    faces = BOX_FACES.copy()
+    faces[[4, 9]] = faces[[4, 9], ::-1]
+    r = compute([box_solid((0, 0, 0), (2, 1, 1), faces=faces)], 0, 1)
+    assert not r.uncomputed
+    assert r.total == pytest.approx(2.0, rel=REL)
+
+
+def test_t_junction_is_repaired():
+    """片側の面が辺を途中の頂点で分け、反対側の面は1本で持つ形（辺の分け方の食い違い）も数える。"""
+    verts = np.array([[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0],
+                      [0, 0, 1], [1, 0, 1], [1, 1, 1], [0, 1, 1], [1, 0, 0.4]], float)
+    faces = np.array([
+        [0, 2, 1], [0, 3, 2], [4, 5, 6], [4, 6, 7],
+        [0, 1, 8], [0, 8, 5], [0, 5, 4],  # 手前の面：縦の辺 1-5 を点8で分けている
+        [1, 2, 6], [1, 6, 5],  # 右の面：同じ辺を1本で持つ
+        [2, 3, 7], [2, 7, 6], [3, 0, 4], [3, 4, 7],
+    ])
+    s = Solid("t", "t", "t", "基礎", "コンクリート", "1SL", verts, faces).build()
+    assert s.manifold is not None
+    r = compute([s], 0, 1, region=box(-5, -5, 5, 5))
+    assert r.total == pytest.approx(1.0, rel=REL)
+    r = compute([s], 0, 0.4)  # 高さで切っても正しい
+    assert r.total == pytest.approx(0.4, rel=REL)
+
+
+def test_hole_is_not_filled_and_bad_reference_is_hidden():
+    """穴がある形は推測で埋めない（D4）。表面から出した参考体積が箱を超えるときは出さない。"""
+    near = box_solid((0, 0, 0), (1, 1, 1), key="near", faces=BOX_FACES[:-2])
+    far = box_solid((100, 0, 0), (101, 1, 1), key="far", faces=np.delete(BOX_FACES, [6, 7], axis=0))
+    r = compute([near, far], 0, 1)
+    assert r.total == 0
+    assert {u.key for u in r.uncomputed} == {"near", "far"}
+    ref = {u.key: u.reference_volume for u in r.uncomputed}
+    assert ref["near"] is not None and ref["near"] <= 1 + 1e-6
+    assert ref["far"] is None  # 原点から遠い面が抜けると、表面の値は箱の何十倍にもなる
+
+
 def test_zones_sum_to_whole():
     # 2本の境界線（十字）で4分割 → 各工区の合計＝全体
     solids = [box_solid((0, 0, 0), (4, 3, 0.2), key="slab", category="スラブ"),

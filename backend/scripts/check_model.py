@@ -34,7 +34,8 @@ for name, info in model.materials.items():
 bad = [s for s in model.solids if s.manifold is None]
 print(f"\n閉じた立体にできない形状: {len(bad)}  変換失敗・複数材料: {len(model.skipped)}")
 for s in bad[:10]:
-    print(f"  {s.category} {s.member_name} {s.key}: {s.error} 参考体積={s.mesh_volume:.4f}")
+    ref = s.reference_volume
+    print(f"  {s.category} {s.member_name} {s.key}: {s.error} 参考体積={'なし（形状が壊れている）' if ref is None else f'{ref:.4f}'}")
 for s in model.skipped[:10]:
     print(f"  {s.name} {s.key}: {s.reason}")
 
