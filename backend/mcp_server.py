@@ -225,7 +225,7 @@ def truck_plan(volume_m3: float, truck_m3: float, extra_pct: float) -> tuple[flo
     if last < 0.005:
         last = 0
     if not need:
-        return need, "—"
+        return need, "残りなし"
     if not n:
         return need, f"1台（{last:,.2f} m³）"
     if last:
@@ -243,7 +243,7 @@ def remaining(storey: str, spans: list[str], depth_mm: float | None = None, pres
     スラブは全厚を数え、重なりは1回だけ数える。
     - storey：施工階（例「5SL」「5階」）
     - spans：残りのスパン。通り芯の範囲で1つずつ（例 ["X8～X9×Y1～Y2", "X9～X10×Y1～Y2"]）。複数スパンをまとめて「X8～X11×Y1～Y2」でもよい
-    - depth_mm：柱・梁の打ち上がり。上端から何 mm 下まで打ってあるか（0＝上端まで打設済み＝スラブだけが残る）
+    - depth_mm：柱・梁の打ち上がり。コン天（その階の上のSL）から何 mm 下まで打ってあるか（0＝コン天まで打設済み＝スラブだけが残る）
     - preset：depth_mm の代わりに「スラブ下」「梁せい中央」「未打設」（PCアプリのボタンと同じ目安。残りのスパンに掛かる部材の中央値）
     - truck_m3：生コン車1台の積載量、extra_pct：割増（%）
     返り値の「定義」を回答に添えること。
@@ -269,7 +269,7 @@ def remaining(storey: str, spans: list[str], depth_mm: float | None = None, pres
         else:
             raise AskAgain(f"preset「{preset}」はありません。「スラブ下」「梁せい中央」「未打設」のどれか")
     elif depth_mm is None:
-        raise AskAgain("柱・梁の打ち上がりを depth_mm（上端から何 mm 下）か preset（「スラブ下」など）で指定してください")
+        raise AskAgain("柱・梁の打ち上がりを depth_mm（コン天から何 mm 下）か preset（「スラブ下」など）で指定してください")
     else:
         used = "数値で指定"
     depth_mm = max(0.0, float(depth_mm))
@@ -283,7 +283,7 @@ def remaining(storey: str, spans: list[str], depth_mm: float | None = None, pres
     need, trucks = truck_plan(res.total, truck_m3, extra_pct)
     return {
         "条件": {"施工階": label, "残りのスパン": items, "スパン数": len(items),
-               "柱・梁の打ち上がり": f"上端 −{depth_mm:,.0f} mm（{used}）"},
+               "柱・梁の打ち上がり": f"コン天 −{depth_mm:,.0f} mm（{used}）"},
         "残り数量m3": res.total,
         **({"割増込みm3": need} if extra_pct else {}),
         "生コン車": trucks,

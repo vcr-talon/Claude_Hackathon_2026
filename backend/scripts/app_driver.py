@@ -72,12 +72,10 @@ def open_pc(ctx, base: str, storey: str = "5SL"):
 
 
 def export_site(page, dest: Path) -> Path:
-    """「4. 打設終盤の残量」→「タブレット用に書き出す」を押して、保存されたファイルを dest に置く。"""
-    page.click("button[data-mode=remain]")
+    """「4. 打設終盤の残量」の「タブレット用に書き出す」を押して、保存されたファイルを dest に置く。"""
     with page.expect_download(timeout=180_000) as dl:
         page.click("#exportSite")
     dl.value.save_as(dest)
-    page.click("button[data-mode=remain]")  # モードを抜ける
     return dest
 
 

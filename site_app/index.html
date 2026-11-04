@@ -21,7 +21,7 @@
     <p class="note">PCアプリの「タブレット用に書き出す」で作ったファイルを選んでください</p>
     <div id="lastWork" class="lastwork hidden"></div>
     <p id="startError" class="error hidden"></p>
-    <p class="note"><button class="btn small" data-open-settings>設定・エラー記録</button></p>
+    <p class="note"><button class="btn small" data-open-settings>設定・不具合の記録</button></p>
   </section>
 
   <!-- 作業画面 -->
@@ -51,20 +51,23 @@
     </div>
 
     <footer class="controls">
+      <div class="taphint">スパンをタップ：1回＝打設中　2回＝打設済み　3回＝未打設に戻す<br>
+        <span class="small muted">幅2m未満の細いスパンは数字を省略しています（量は合計に入っています）</span></div>
       <div class="row">
-        <label for="depth">柱・梁の打上り：上端 −</label>
+        <label for="depth">柱・梁の打ち上がり：コン天 −</label>
         <input id="depth" type="number" inputmode="numeric" min="0" step="10" value="0"><span>mm</span>
       </div>
       <div id="depthNote" class="small muted"></div>
+      <div class="presetcap">目安を入れる（打設中のスパンの値。押すと上の欄に入ります）</div>
       <div class="row presets">
         <button class="btn" data-preset="slab_bottom_mm">スラブ下</button>
         <button class="btn" data-preset="beam_mid_mm">梁せい中央</button>
         <button class="btn" data-preset="none">未打設（全量）</button>
       </div>
       <div class="row">
-        <label for="truck">生コン車</label>
-        <input id="truck" type="number" inputmode="decimal" min="0.25" step="0.25"><span>m³／台</span>
-        <label for="extra">割増</label>
+        <label for="truck">生コン車1台の積載量</label>
+        <input id="truck" type="number" inputmode="decimal" min="0.25" step="0.25"><span>m³</span>
+        <label for="extra">割増（ロス分）</label>
         <input id="extra" type="number" inputmode="decimal" min="0" step="1"><span>%</span>
       </div>
       <div class="row tools">
@@ -86,14 +89,14 @@
   <div id="settings" class="sheet hidden">
     <div class="sheetbody">
       <h2>設定</h2>
-      <p>アプリの版：<b id="appVersion"></b></p>
+      <p>アプリの版：<b id="appVersion"></b>（新しい版に入れ替わったかの確認用）</p>
       <p class="small muted">データはこの端末の中だけで扱い、どこにも送信しません。作業の状態はこの端末に自動で保存します。</p>
-      <h3>エラー記録</h3>
-      <p class="small muted">うまく動かないときは、この内容をコピーして開発担当に送ってください</p>
+      <h3>不具合の記録</h3>
+      <p class="small muted">うまく動かないときは、この内容をコピーして担当者に送ってください</p>
       <textarea id="errorLog" class="errorlog" readonly></textarea>
       <div class="row">
-        <button id="copyErrors" class="btn small">エラー記録をコピー</button>
-        <button id="clearErrors" class="btn small">エラー記録を消す</button>
+        <button id="copyErrors" class="btn small">記録をコピー</button>
+        <button id="clearErrors" class="btn small">記録を消す</button>
       </div>
       <h3>保存した作業</h3>
       <div class="row">

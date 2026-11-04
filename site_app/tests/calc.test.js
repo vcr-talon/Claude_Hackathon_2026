@@ -66,7 +66,7 @@ test('生コン車の文面はPCアプリと同じ', () => {
   assert.equal(truckPlan(23.769, 4.25, 0).text, '4.25 m³ × 5台 ＋ 最終車 2.52 m³（計 6 台）');
   assert.equal(truckPlan(3.961, 4.25, 0).text, '1台（3.96 m³）');
   assert.equal(truckPlan(8.5, 4.25, 0).text, '4.25 m³ × 2台（計 2 台）');
-  assert.equal(truckPlan(0, 4.25, 0).text, '—');
+  assert.equal(truckPlan(0, 4.25, 0).text, '残りなし');
   const t = truckPlan(72.78, 4.25, 3); // 割増 3% → 74.9634
   near(t.need, 74.9634, 1e-9);
   assert.equal(t.text, '4.25 m³ × 17台 ＋ 最終車 2.71 m³（計 18 台）');

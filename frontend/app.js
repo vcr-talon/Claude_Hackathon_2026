@@ -596,7 +596,7 @@ function truckPlan(volume) {
   const need = volume * (1 + extra / 100);
   let n = Math.floor(need / cap + 1e-9), last = need - n * cap;
   if (last < 0.005) last = 0;
-  const text = !need ? '—' : !n ? `1台（${fmt(last)} m³）` : last
+  const text = !need ? '残りなし' : !n ? `1台（${fmt(last)} m³）` : last
     ? `${fmt(cap)} m³ × ${n}台 ＋ 最終車 ${fmt(last)} m³（計 ${n + 1} 台）`
     : `${fmt(cap)} m³ × ${n}台（計 ${n} 台）`;
   return { need, extra, text };
@@ -615,15 +615,15 @@ async function runRemain() {
     const v = await remainVolume(ids, depth);
     if (seq !== remainSeq) return;
     const t = truckPlan(v);
-    $('remainResult').innerHTML = `<div class="muted">残り ${ids.length} スパン・柱梁は上端から −${depth.toLocaleString('ja-JP')} mm まで打設済み</div>` +
+    $('remainResult').innerHTML = `<div class="muted">残り ${ids.length} スパン・柱梁はコン天 −${depth.toLocaleString('ja-JP')} mm まで打設済み</div>` +
       `<div class="total">${fmt(v)} m³</div>` + (t.extra ? `<div class="muted">割増 ${t.extra}% 込み ${fmt(t.need)} m³</div>` : '') +
-      `<div class="trucks">${t.text}</div>`;
+      `<div class="trucks">${t.extra ? '発注の目安：' : '発注の目安（割増なし）：'}${t.text}</div>`;
   } catch (e) {
-    if (seq === remainSeq) $('remainResult').innerHTML = `<div class="warn">計算できません：${esc(e.message)}</div>`;
+    if (seq === remainSeq) $('remainResult').innerHTML = `<div class="warn">計算できませんでした（詳細：${esc(e.message)}）</div>`;
   }
 }
 
-// 早見表：「残りのスパン数（打設順の後ろから）× 打ち上がり高さ」の残量と台数
+// 残量の一覧表（早見表）：「残りのスパン数（打設順の後ろから）× 打ち上がり高さ」の残量と台数
 async function exportRemainCsv() {
   const order = [...state.remainCells];
   if (!order.length) { toast('先に残りのスパンを選んでください', 'error'); return; }
@@ -631,11 +631,11 @@ async function exportRemainCsv() {
     .filter(([, d]) => d !== null);
   const cur = Number($('remainDepth').value) || 0;
   if (!levels.some(([, d]) => d === cur)) levels.push(['入力値', cur]);
-  toast('早見表を計算しています…', 'info');
+  toast('残量の一覧表を計算しています…', 'info');
   const rows = order.map((_, k) => order.slice(k)); // 残り n, n-1, ..., 1 スパン
   const vols = await Promise.all(rows.flatMap((ids) => levels.map(([, d]) => remainVolume(ids, d))));
   const head = ['残りのスパン数', '残りのスパン（打設順）'];
-  for (const [name, d] of levels) head.push(`${name}：上端−${d}mm（m3）`, `${name}：生コン車`);
+  for (const [name, d] of levels) head.push(`${name}：コン天−${d}mm（m3）`, `${name}：生コン車`);
   const out = [head];
   rows.forEach((ids, r) => {
     const row = [ids.length, ids.map((id) => cellById(id).label).join(' → ')];
@@ -643,8 +643,8 @@ async function exportRemainCsv() {
     out.push(row);
   });
   out.push([], [`生コン車 ${$('truckM3').value} m³／台・割増 ${$('extraPct').value}%・高さ範囲 ${$('rangeText').textContent}`]);
-  download(`${state.meta.source.replace(/\.ifc$/i, '')}_${stamp()}_残量早見表.csv`, csvBlob(out));
-  toast('早見表を書き出しました', 'ok');
+  download(`${state.meta.source.replace(/\.ifc$/i, '')}_${stamp()}_残量一覧表.csv`, csvBlob(out));
+  toast('残量の一覧表を書き出しました', 'ok');
 }
 
 // タブレット用データ：全スパンの「上端からの深さ→体積」の表を計算サーバーで作り、1つのJSONに保存する
@@ -1293,8 +1293,8 @@ async function runCompute() {
   if (seq !== computeSeq) return;
   if (!res.ok) {
     const detail = await errorDetail(res);
-    $('resultBody').innerHTML = `<div class="warn">計算できません：${esc(detail)}</div>`;
-    toast(`計算できません：${detail}`, 'error');
+    $('resultBody').innerHTML = `<div class="warn">計算できませんでした（詳細：${esc(detail)}）</div>`;
+    toast(`計算できませんでした（詳細：${detail}）`, 'error');
     return;
   }
   // 登録時に「計算した時点の条件」をそのまま使えるよう、条件も一緒に持っておく
@@ -1489,8 +1489,8 @@ async function runUnits() {
   if (seq !== unitSeq) return;
   if (!res.ok) {
     const detail = await errorDetail(res);
-    $('unitSummary').innerHTML = `<div class="warn">計算できません：${esc(detail)}</div>`;
-    toast(`打設リストを計算できません：${detail}`, 'error');
+    $('unitSummary').innerHTML = `<div class="warn">計算できませんでした（詳細：${esc(detail)}）</div>`;
+    toast(`打設リストを計算できませんでした（詳細：${detail}）`, 'error');
     return;
   }
   state.unitResult = await res.json();
@@ -1643,7 +1643,7 @@ async function exportCsv() {
   if (!res.ok) { toast(`CSVを書き出せません：${await errorDetail(res)}`, 'error'); return; }
   const ur = await res.json();
   if (ur.units.some((u) => !u.members)) { // 画面だけ新しく、計算サーバーが古いまま動いているとき
-    toast('CSVを書き出せません：計算サーバーが古いままです。start.bat を閉じて起動し直してください', 'error');
+    toast('CSVを書き出せません。アプリが古い状態です。いったん閉じて、起動し直してください（start.bat の画面を閉じてから、もう一度起動）', 'error');
     return;
   }
   const join = (u, key) => u.parts.map((p) => partFields(p)[key]).join(' ＋ ');
@@ -1725,8 +1725,15 @@ async function openPlan(file) {
 function renderSidebar() {
   const m = state.meta;
   const uncomputed = m.uncomputed.filter((u) => m.materials[u.material]?.included || u.material.includes('コンクリート'));
-  $('modelInfo').textContent = `${m.source}（${m.schema}）　コンクリート立体 ${m.solid_count} 件` +
-    (uncomputed.length ? `　未計算 ${uncomputed.length} 件` : '');
+  // 部材の数（1つの部材が複数の形状に分かれていることがあるので、形状の数ではなく部材で数える）
+  const concrete = new Set(meshes.filter((x) => m.materials[x.userData.material]?.included).map((x) => x.userData.member_id));
+  uncomputed.forEach((u) => concrete.add(u.member_id));
+  $('modelInfo').innerHTML = `${esc(m.source)}　コンクリート部材 ${concrete.size.toLocaleString('ja-JP')} 件` +
+    (uncomputed.length
+      ? `<details class="missing"><summary>数量に入っていない部材 ${uncomputed.length} 件（押すと一覧）</summary><ul>` +
+        uncomputed.map((u) => `<li>${esc(u.category ?? '')} ${esc(u.name || '(名称なし)')}：${esc(u.reason)}</li>`).join('') +
+        '</ul><div>形が閉じていないなど、体積を正しく計算できない部材です。推定では補いません</div></details>'
+      : '');
   state.materials = new Set(defaultMaterials());
   // 複数材料の形状と材料なしは切り分けられないので選べない（コンクリートを含むものは未計算として一覧に出る）
   $('materials').innerHTML = Object.entries(m.materials).map(([name, info]) => {
@@ -1899,12 +1906,12 @@ $('remainBody').addEventListener('click', (ev) => {
   const kind = ev.target.dataset.preset;
   if (!kind) return;
   const d = presetDepth(kind);
-  if (d === null) { toast(`${kind === 'slab' ? 'スラブ' : '梁'}が見つからないため、高さを求められません`, 'error'); return; }
+  if (d === null) { toast(`選んだスパンに${kind === 'slab' ? 'スラブ' : '梁'}がありません。mm を直接入れてください`, 'error'); return; }
   $('remainDepth').value = d;
   scheduleRemain();
 });
 $('exportSite').addEventListener('click', () => exportSite().catch((e) => toast(`タブレット用に書き出せません：${e.message}`, 'error')));
-$('remainCsv').addEventListener('click', () => exportRemainCsv().catch((e) => toast(`早見表を書き出せません：${e.message}`, 'error')));
+$('remainCsv').addEventListener('click', () => exportRemainCsv().catch((e) => toast(`残量の一覧表を書き出せませんでした（詳細：${e.message}）`, 'error')));
 $('exportCsv').addEventListener('click', () => exportCsv().catch((e) => toast(`CSVを書き出せません：${e.message}`, 'error')));
 $('planInput').addEventListener('change', (ev) => {
   if (ev.target.files[0]) openPlan(ev.target.files[0]);

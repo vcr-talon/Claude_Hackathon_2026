@@ -58,7 +58,7 @@ export function truckPlan(volume, truckM3, extraPct) {
   const n = Math.floor(need / cap + 1e-9);
   let last = need - n * cap;
   if (last < 0.005) last = 0;
-  const text = !need ? '—' : !n ? `1台（${fmt(last)} m³）` : last
+  const text = !need ? '残りなし' : !n ? `1台（${fmt(last)} m³）` : last
     ? `${fmt(cap)} m³ × ${n}台 ＋ 最終車 ${fmt(last)} m³（計 ${n + 1} 台）`
     : `${fmt(cap)} m³ × ${n}台（計 ${n} 台）`;
   return { need, extra, text };

@@ -68,6 +68,10 @@ input[type=number] { font: inherit; font-size: 20px; width: 110px; min-height: 4
 
 .planwrap { grid-area: plan; position: relative; min-height: 0; background: #fafbfc; }
 .plan { width: 100%; height: 100%; display: block; touch-action: none; user-select: none; -webkit-user-select: none; }
+/* タップの説明は図に重ねず、入力欄の上に置く */
+.taphint { background: #fff3e0; border-radius: 8px; padding: 6px 10px; font-size: 15px; margin-bottom: 4px; }
+/* 目安ボタンの説明は、コン天の説明と見分けが付くよう1行あけてボタンの直前に */
+.presetcap { font-size: 14px; color: var(--text); margin-top: 10px; }
 .legend { position: absolute; left: 8px; bottom: 8px; display: flex; gap: 12px; align-items: center; flex-wrap: wrap;
   background: rgba(255,255,255,.92); border-radius: 8px; padding: 4px 8px; font-size: 14px; }
 .sw { display: inline-block; width: 16px; height: 16px; border: 1px solid #90a4ae; border-radius: 3px; vertical-align: -3px; margin-right: 4px; }

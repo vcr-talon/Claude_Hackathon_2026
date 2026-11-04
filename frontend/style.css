@@ -40,6 +40,8 @@ h2 { font-size: 15px; margin: 0 0 8px; }
 section { border-top: 1px solid var(--line); padding: 12px 0; }
 header { padding-bottom: 10px; }
 .muted { color: var(--muted); font-size: 12px; }
+#modelInfo details.missing summary { color: var(--warn); cursor: pointer; padding: 2px 0; border: none; font-size: 12px; }
+#modelInfo details.missing ul { margin: 4px 0; padding-left: 18px; }
 .hidden { display: none !important; }
 button, select, input { font: inherit; }
 button {

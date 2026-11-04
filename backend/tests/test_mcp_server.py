@@ -12,7 +12,7 @@ def test_truck_plan_same_text_as_pc():
     assert ms.truck_plan(23.769, 4.25, 0)[1] == "4.25 m³ × 5台 ＋ 最終車 2.52 m³（計 6 台）"
     assert ms.truck_plan(3.961, 4.25, 0)[1] == "1台（3.96 m³）"
     assert ms.truck_plan(8.5, 4.25, 0)[1] == "4.25 m³ × 2台（計 2 台）"
-    assert ms.truck_plan(0, 4.25, 0)[1] == "—"
+    assert ms.truck_plan(0, 4.25, 0)[1] == "残りなし"
     need, text = ms.truck_plan(72.78, 4.25, 3)
     assert need == pytest.approx(74.9634)
     assert text == "4.25 m³ × 17台 ＋ 最終車 2.71 m³（計 18 台）"

@@ -1,12 +1,13 @@
 // 現場残量アプリの画面。数量の計算は calc.js（PCアプリで作った表を引いて足すだけ）
 import { fmt, fullVolume, parseSiteData, presetMm, totals, remaining, truckPlan } from './calc.js';
 
-const APP_VERSION = '1.0.0'; // sw.js の VERSION と合わせる（キャッシュで古い版が動いていないか確かめる用）
+const APP_VERSION = '1.2.0'; // sw.js の VERSION と合わせる（キャッシュで古い版が動いていないか確かめる用）
 const $ = (id) => document.getElementById(id);
 const SVGNS = 'http://www.w3.org/2000/svg';
 const CAT_COLORS = { 柱: '#c62828', 梁: '#ef6c00', 壁: '#0288d1', スラブ: '#a0a4a8', 基礎: '#6d4c41', 階段: '#6a1b9a', その他: '#546e7a' };
 const NEXT = { todo: 'pouring', pouring: 'done', done: 'todo' }; // タップで巡る順
 const EMPTY = 0.0005; // m³。これ未満のスパン（建物の外の帯など）はタップの対象にしない
+const THIN_SPAN = 2.0; // m。短い辺がこれ未満のスパンは数字を出さない（ふつうのスパンは3〜8m。通り芯が近い間や端の帯）
 const TAP_SLOP = 10; // px。指を離したときの移動がこれ未満ならタップ
 const STORE = 'site.work.'; // localStorage：スパンの状態と履歴（データファイル本体は保存しない）
 const LAST = 'site.last';
@@ -163,11 +164,13 @@ function buildPlan() {
     cellsG.appendChild(path);
     if (empty) continue;
     const xs = c.ring.map((p) => p[0]), ys = c.ring.map((p) => p[1]);
-    const fs = Math.min(Math.max(Math.min(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys)) * 0.28, size * 0.006), size * 0.02);
+    const short = Math.min(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys));
+    const fs = Math.min(Math.max(short * 0.28, size * 0.006), size * 0.02);
     const [cx, cy] = centroid(c.ring);
     const text = el('text', { x: cx.toFixed(3), y: (-cy).toFixed(3), class: 'cellnum', 'font-size': fs.toFixed(3) });
     nums.appendChild(text);
-    cellEls.set(c.id, { path, text, cell: c });
+    // 細いスパン（通り芯が近い間・建物の端の帯）は小さな数字が並んで読めないので出さない（色と数量の合計はそのまま）
+    cellEls.set(c.id, { path, text, cell: c, thin: short < THIN_SPAN });
   }
 
   // 通り芯と記号
@@ -233,7 +236,7 @@ const statusOf = (id) => work.statuses[id] ?? 'todo';
 const depthOf = (id) => work.cellDepth[id] ?? work.depth;
 
 function updateCells() {
-  for (const [id, { path, text, cell }] of cellEls) {
+  for (const [id, { path, text, cell, thin }] of cellEls) {
     if (!inZone(cell)) { // 選んでいない工区は薄くして、タップしても反応しない
       path.setAttribute('class', 'cell other');
       text.textContent = '';
@@ -243,7 +246,7 @@ function updateCells() {
     path.setAttribute('class', `cell ${s}${work.cellDepth[id] !== undefined ? ' own' : ''}`);
     text.setAttribute('class', `cellnum ${s}`);
     const v = remaining(cell, s, depthOf(id), data);
-    text.textContent = s === 'done' || v < 0.05 ? '' : fmt(v, 1); // 0.0 と出るごく小さいスパンは数字を出さない
+    text.textContent = s === 'done' || thin || v < 0.05 ? '' : fmt(v, 1); // 0.0 と出るごく小さいスパンも数字を出さない
   }
 }
 
@@ -256,12 +259,13 @@ function render() {
   $('done').textContent = `${fmt(t.done)} m³`;
   $('rest').textContent = `${fmt(t.remaining)} m³`;
   const plan = truckPlan(t.remaining, work.truck, work.extra);
-  $('trucks').textContent = (plan.extra ? `割増 ${plan.extra}% 込み ${fmt(plan.need)} m³　` : '') + plan.text;
+  $('trucks').textContent = (plan.extra ? `発注の目安：割増 ${plan.extra}% 込み ${fmt(plan.need)} m³　` : '発注の目安（割増なし）：') + plan.text;
   $('restInfo').textContent = `残り ${rest} スパン${pouring ? `（うち打設中 ${pouring}）` : ''}`;
   $('undo').disabled = !work.undo.length;
   const topName = (data.storeys ?? []).find((s) => Math.abs(s.elevation - data.z1) < 0.005)?.name;
-  $('depthNote').textContent = (topName ? `上端＝${topName}。` : '') +
-    (pouring ? '打設中のスパンにかかります' : '打設中のスパンがありません（スパンをタップすると打設中になります）');
+  $('depthNote').textContent = `コン天＝${topName ?? '高さ範囲の上端'}の高さ。0 mm なら天端まで打ち上がり。` +
+    (pouring ? 'この高さは、今打っているスパン（オレンジ）の柱・梁にだけ効きます（打設中が複数なら全部に同じ値）'
+      : '今打っているスパンがありません（スパンをタップすると打設中になります）');
 }
 
 function syncInputs() {
@@ -404,7 +408,7 @@ function applyPreset(kind) {
     const mine = [...cellEls.values()].map(({ cell }) => cell).filter(inZone);
     const pouring = mine.filter((c) => statusOf(c.id) === 'pouring');
     mm = presetMm(pouring.length ? pouring : mine, kind);
-    if (mm === null) { toast(`${kind === 'slab_bottom_mm' ? 'スラブ' : '梁'}が見つからないため、目安を出せません`, 'error'); return; }
+    if (mm === null) { toast(`打設中のスパンに${kind === 'slab_bottom_mm' ? 'スラブ' : '梁'}がありません。mm を直接入れてください`, 'error'); return; }
   }
   pushUndo();
   work.depth = mm;
