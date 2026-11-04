@@ -75,6 +75,7 @@
         <input id="extra" type="number" inputmode="decimal" min="0" step="1"><span>%</span>
       </div>
       <div class="row tools">
+        <button id="openHistory" class="btn small">記録</button>
         <button id="openOther" class="btn small">別のデータを開く</button>
         <button id="showMissing" class="btn small hidden">含まれない部材</button>
         <button class="btn small" data-open-settings>設定</button>
@@ -88,6 +89,17 @@
       <p id="missingLead"></p>
       <ul id="missingList"></ul>
       <button id="missingClose" class="btn">閉じる</button>
+    </div>
+  </div>
+  <div id="history" class="sheet hidden">
+    <div class="sheetbody">
+      <h2>打設の記録</h2>
+      <p class="small muted">新しい順。「記録を共有」で、この記録とスパンごとの最終状態を表（CSV）にして送れます</p>
+      <ol id="historyList" class="historylist"></ol>
+      <div class="row">
+        <button id="shareRecord" class="btn">記録を共有</button>
+        <button id="historyClose" class="btn">閉じる</button>
+      </div>
     </div>
   </div>
   <div id="settings" class="sheet hidden">

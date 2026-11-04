@@ -1,7 +1,8 @@
 // 現場残量アプリの画面。数量の計算は calc.js（PCアプリで作った表を引いて足すだけ）
 import { fmt, fullVolume, parseSiteData, presetMm, totals, remaining, truckPlan } from './calc.js';
+import { STATUS_NAME, recordCsv, stamp, zoneKeyOf, zoneTitle } from './record.js';
 
-const APP_VERSION = '1.3.0'; // sw.js の VERSION と合わせる（キャッシュで古い版が動いていないか確かめる用）
+const APP_VERSION = '1.4.0'; // sw.js の VERSION と合わせる（キャッシュで古い版が動いていないか確かめる用）
 const $ = (id) => document.getElementById(id);
 const SVGNS = 'http://www.w3.org/2000/svg';
 const CAT_COLORS = { 柱: '#c62828', 梁: '#ef6c00', 壁: '#0288d1', スラブ: '#a0a4a8', 基礎: '#6d4c41', 階段: '#6a1b9a', その他: '#546e7a' };
@@ -24,10 +25,9 @@ let zones = []; // 工区で切ったデータのとき [{key, name}]。切り�
 let bulk = false; // 「打設済みをまとめて」：なぞったスパンを一度に打設済みにする
 let editId = null; // 長押しで選んだスパン。下段の打ち上がりはこのスパンだけに効く（null なら打設中の全スパン共通）
 
-// スパンのIDの「#A」「#A-2」から工区のキーを取る（工区で切っていなければ null）
-const zoneOf = (cell) => (cell.id.includes('#') ? cell.id.split('#')[1].replace(/-\d+$/, '') : null);
+const zoneOf = zoneKeyOf;
 const inZone = (cell) => !work.zone || zoneOf(cell) === work.zone;
-const zoneLabel = (z) => (/^[A-F]$/.test(z.name) ? `${z.name}工区` : z.name);
+const zoneLabel = (z) => zoneTitle({ zones }, z.key);
 const zoneCells = () => data.cells.filter(inZone);
 
 // ---------- 保存（入力のたびに。Safariが裏のタブを破棄しても続きから再開できるように） ----------
@@ -49,11 +49,23 @@ function pushUndo() {
   work.undo.push(snapshot());
   if (work.undo.length > UNDO_MAX) work.undo.shift();
 }
+// 打設の記録：操作のたびに「時刻・工区・操作・スパン・打ち上がり・その時点の残り」を残す（元に戻しても記録は消さない）
+const LOG_MAX = 2000;
+function logEvent(action, ids, depthMm) {
+  const t = totals({ ...data, cells: zoneCells() }, statusOf, depthOf);
+  work.log.push({
+    at: new Date().toISOString(), zone: work.zone ? zoneTitle(data, work.zone) : '', action,
+    spans: ids.map((id) => cellEls.get(id)?.cell.label ?? id), depthMm, remaining: t.remaining,
+  });
+  if (work.log.length > LOG_MAX) work.log.shift();
+}
+
 function undo() {
   const prev = work.undo.pop();
   if (!prev) return;
   Object.assign(work, prev);
   if (editId && statusOf(editId) !== 'pouring') editId = null; // 戻した結果、打設中でなくなったら入力を終える
+  logEvent('元に戻す', []);
   save();
   syncInputs();
   updateCells();
@@ -102,6 +114,7 @@ function start(d) {
   // 工区の一覧（書き出しに無い古いファイルでも、スパンのIDから拾う）
   zones = d.zones?.length ? d.zones : [...new Set(d.cells.map(zoneOf).filter(Boolean))].map((k) => ({ key: k, name: k }));
   if (!zones.some((z) => z.key === work.zone)) work.zone = zones[0]?.key ?? null;
+  work.log ??= []; // 記録を持たない前の版の保存データでも開けるように
   setBulk(false);
   $('title').textContent = d.title;
   renderZoneTabs();
@@ -287,6 +300,7 @@ function startOwnDepth(id) {
   if (statusOf(id) !== 'pouring') {
     pushUndo();
     work.statuses[id] = 'pouring';
+    logEvent('打設中', [id], depthOf(id));
     save();
   }
   editId = id;
@@ -300,6 +314,7 @@ function endOwnDepth(resetToCommon) {
   if (resetToCommon && editId && work.cellDepth[editId] !== undefined) {
     pushUndo();
     delete work.cellDepth[editId];
+    logEvent('そのスパンの高さを共通の値に戻す', [editId], work.depth);
     save();
   }
   editId = null;
@@ -321,6 +336,7 @@ function tapCell(id) {
   const next = NEXT[statusOf(id)];
   if (next === 'todo') delete work.statuses[id]; else work.statuses[id] = next;
   if (id === editId && next !== 'pouring') { editId = null; syncInputs(); } // 打設中でなくなったら、そのスパンの入力は終える
+  logEvent(STATUS_NAME[next], [id], next === 'pouring' ? depthOf(id) : undefined);
   save();
   updateCells();
   render();
@@ -356,6 +372,13 @@ function paintTo(px, py) {
   const n = Math.max(1, Math.ceil(Math.hypot(px - from.x, py - from.y) / 8));
   for (let i = 1; i <= n; i++) paintAt(from.x + (px - from.x) * i / n, from.y + (py - from.y) * i / n);
   gesture.last = { x: px, y: py };
+}
+
+// なぞり1回分を1件の記録にまとめて保存する
+function endPaint() {
+  logEvent(`まとめて${STATUS_NAME[gesture.to]}`, [...gesture.ids]);
+  gesture.to = null; // 2本指に切り替わったあと、指を離したときに二重に記録しない
+  save();
 }
 
 function paintAt(px, py) {
@@ -403,7 +426,7 @@ function onDown(e) {
     }, LONG_PRESS_MS);
   } else if (pointers.size === 2) {
     clearTimeout(gesture?.timer);
-    if (gesture?.type === 'paint' && gesture.to) save();
+    if (gesture?.type === 'paint' && gesture.to) endPaint();
     const [a, b] = [...pointers.values()];
     gesture = { type: 'pinch', d0: dist(a, b), m0: mid(a, b), vb: [...vb] };
   }
@@ -434,7 +457,7 @@ function onUp(e) {
   if (!pointers.has(e.pointerId)) return;
   pointers.delete(e.pointerId);
   clearTimeout(gesture?.timer);
-  if (gesture?.type === 'paint' && gesture.to) save();
+  if (gesture?.type === 'paint' && gesture.to) endPaint();
   if (gesture?.type === 'tap' && e.type === 'pointerup') {
     const id = e.target.closest?.('[data-id]')?.dataset.id;
     const hit = id && cellEls.has(id) ? id : cellAtScreen(e.clientX, e.clientY);
@@ -449,6 +472,10 @@ function onUp(e) {
 function setDepth(mm) {
   if (editId) work.cellDepth[editId] = mm; else work.depth = mm;
 }
+// 記録に書くスパン：長押ししたスパン、なければ選んでいる工区の打設中のスパン
+const depthTargets = () => (editId ? [editId]
+  : [...cellEls.values()].filter(({ cell }) => inZone(cell) && statusOf(cell.id) === 'pouring').map(({ cell }) => cell.id));
+const PRESET_NAME = { slab_bottom_mm: 'スラブ下', beam_mid_mm: '梁せい中央', none: '未打設（全量）' };
 
 function bindNumber(id, field) {
   let pushed = false;
@@ -477,6 +504,7 @@ function applyPreset(kind) {
   }
   pushUndo();
   setDepth(mm);
+  logEvent(`打ち上がり：${PRESET_NAME[kind]}`, depthTargets(), mm);
   syncInputs();
   save();
   updateCells();
@@ -519,6 +547,55 @@ function clearWork() {
   showStart();
 }
 
+// ---------- 記録の画面と共有 ----------
+function openHistory() {
+  const list = $('historyList');
+  list.replaceChildren();
+  const items = [...work.log].reverse();
+  if (!items.length) {
+    const li = document.createElement('li');
+    li.textContent = 'まだ記録はありません（スパンをタップすると残ります）';
+    list.appendChild(li);
+  }
+  for (const e of items) {
+    const li = document.createElement('li');
+    const time = document.createElement('span');
+    time.className = 'time';
+    time.textContent = stamp(e.at).slice(11, 16); // 時:分
+    const rest = document.createElement('span');
+    rest.className = 'rest';
+    rest.textContent = `残り ${fmt(e.remaining)} m³`;
+    const what = [e.zone, e.action, e.spans.length > 3 ? `${e.spans.length} スパン` : e.spans.join('・'),
+      e.depthMm !== undefined && e.depthMm !== null ? `コン天 −${e.depthMm} mm` : ''].filter(Boolean).join('　');
+    li.append(time, rest, document.createTextNode(what));
+    list.appendChild(li);
+  }
+  $('history').classList.remove('hidden');
+}
+
+// 記録の表（CSV）を共有メニューで送る。共有できない端末ではファイルとして保存する
+async function shareRecord() {
+  const csv = recordCsv(data, work, { statusOf, depthOf });
+  const d = new Date(), p = (n) => String(n).padStart(2, '0');
+  const name = `${data.title.replace(/[\s\\/:*?"<>|]/g, '')}_打設記録_${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}.csv`;
+  const file = new File([csv], name, { type: 'text/csv' });
+  if (navigator.canShare?.({ files: [file] })) {
+    try {
+      await navigator.share({ files: [file], title: `打設記録 ${data.title}` });
+      return;
+    } catch (e) {
+      if (e.name === 'AbortError') return; // 共有メニューを閉じただけ
+      logError(`記録の共有：${e.message}`);
+    }
+  }
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(file);
+  a.download = name;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  toast('記録をファイルに保存しました');
+}
+
 // ---------- 起動 ----------
 $('fileInput').addEventListener('change', (e) => {
   if (e.target.files[0]) openFile(e.target.files[0]);
@@ -537,9 +614,16 @@ $('bulk').addEventListener('click', () => {
   if (bulk) toast('なぞったスパンを打設済みにします（2本指で拡大・移動）');
 });
 bindNumber('depth', 'depth');
+$('depth').addEventListener('change', () => { // 入力を終えたときに1件だけ記録する（1文字ごとには残さない）
+  logEvent('打ち上がり：数値で入力', depthTargets(), Math.max(0, Number($('depth').value) || 0));
+  save();
+});
 bindNumber('truck', 'truck');
 bindNumber('extra', 'extra');
 document.querySelectorAll('[data-preset]').forEach((b) => b.addEventListener('click', () => applyPreset(b.dataset.preset)));
+$('openHistory').addEventListener('click', openHistory);
+$('historyClose').addEventListener('click', () => $('history').classList.add('hidden'));
+$('shareRecord').addEventListener('click', () => shareRecord().catch((e) => toast(`記録を共有できませんでした（詳細：${e.message}）`, 'error')));
 $('ownReset').addEventListener('click', () => endOwnDepth(true));
 $('ownClose').addEventListener('click', () => endOwnDepth(false));
 svg.addEventListener('contextmenu', (e) => e.preventDefault()); // 長押しでブラウザのメニューを出さない

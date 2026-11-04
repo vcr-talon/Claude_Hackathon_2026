@@ -31,7 +31,7 @@ jobs:
       - name: 公開するファイルだけを集める
         run: |
           mkdir _site
-          cp site_app/index.html site_app/app.js site_app/calc.js site_app/style.css \
+          cp site_app/index.html site_app/app.js site_app/calc.js site_app/record.js site_app/style.css \
              site_app/sw.js site_app/manifest.webmanifest _site/
           cp -r site_app/icons _site/
           if find _site -name '*.json' | grep -q .; then echo "データファイルが混ざっています"; exit 1; fi
