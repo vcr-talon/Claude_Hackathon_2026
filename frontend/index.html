@@ -37,7 +37,7 @@
 
     <section>
       <h2>2. 工区割（打設を分けるときだけ）</h2>
-      <div class="muted">工区割がない場合、右の数量の「打設リストに追加」をクリック</div>
+      <div class="muted">工区を分けないときは、右の数量の「打設リストに追加」へ</div>
       <div class="modes">
         <button data-mode="boundary" class="mode">境界線を引く</button>
         <button data-mode="zone" class="mode">工区名を付ける</button>
@@ -65,8 +65,13 @@
     </section>
 
     <section>
-      <h2>3. 数える部材</h2>
+      <h2>3. 数える部材と材料</h2>
       <div id="categories" class="checks"></div>
+      <details class="mats">
+        <summary id="matSummary">数える材料：名前に「コンクリート」を含むもの（増し打ち含む）</summary>
+        <div class="muted">増し打ちを数えるかなど、ここで選び直せます（初期値：名前に「コンクリート」を含む材料）</div>
+        <table id="materials" class="mini"></table>
+      </details>
       <div class="modes">
         <button data-mode="select" class="mode">部材を選択</button>
         <button id="clearSel">選択解除</button>
@@ -79,14 +84,14 @@
     <section>
       <h2>4. 打設終盤の残量（当日）</h2>
       <div class="filebtns"><button id="exportSite" class="filebtn">タブレット用に書き出す</button></div>
-      <div class="muted">全スパンの数量を保存します（スパンの選択は不要）。当日はタブレットで開きます</div>
+      <div class="muted">事前にここでタブレット用に書き出します（全スパンの数量。スパンの選択は不要）。当日はタブレットで開きます</div>
       <div class="modes"><button data-mode="remain" class="mode">PCで残りのスパンを選ぶ</button></div>
       <div id="remainHelp" class="help hidden">平面図で残りのスパンを打設する順にタップ（もう一度タップで外す）。柱・梁は下の高さまで打設済みとして計算します</div>
       <div id="remainBody" class="hidden">
         <div class="depthhead">柱・梁の打設済み高さ</div>
         <div class="row">コン天から <input id="remainDepth" type="number" step="10" min="0" placeholder="未計測"> mm</div>
-        <div class="muted">未計測（空欄）のあいだは柱・梁を全部残りに数えます。0 mm＝コン天まで打設済み</div>
-        <div class="row presets"><button data-preset="slab">スラブ下</button><button data-preset="beam">梁せい中央</button><button data-preset="none">未計測に戻す</button></div>
+        <div class="muted"><span id="remainTop">コン天＝高さ範囲の上</span>。未計測（空欄）のあいだは柱・梁を全部残りに数えます。0 mm＝コン天まで打設済み</div>
+        <div class="row presets"><button data-preset="slab">スラブ下まで</button><button data-preset="beam">梁の中央まで</button><button data-preset="none">未計測に戻す</button></div>
         <div class="row nowrap">生コン車 <input id="truckM3" type="number" step="0.25" min="0.25" value="4.25"> m³／台</div>
         <div class="row nowrap">割増（ロス分） <input id="extraPct" type="number" step="1" min="0" value="0"> %</div>
         <div id="remainResult" class="remain"></div>
@@ -96,10 +101,6 @@
       </div>
     </section>
 
-    <details>
-      <summary>数える材料（初期値：名前に「コンクリート」を含む材料）</summary>
-      <table id="materials" class="mini"></table>
-    </details>
   </aside>
 
   <main id="viewport">
@@ -122,11 +123,11 @@
     </div>
     <div class="pane-bottom">
       <div class="listhead"><h2>打設リスト</h2><div id="listTotal"></div></div>
-      <div id="unitHelp" class="help">上の「打設リストに追加」で数量を積み上げます。パラペットなどは既存の行にまとめられます</div>
+      <div id="unitHelp" class="help">上の「打設リストに追加」で数量を積み上げます。後から打つ小さな部分（パラペットなど）は、既存の行にまとめられます</div>
       <ul id="unitList" class="list units"></ul>
       <div id="unitSummary"></div>
       <button id="exportCsv" class="filebtn hidden" title="打設リストと部材明細の2つの表（Excelで開けます）を保存します">表に書き出す（Excel用）</button>
-      <label class="row"><input type="checkbox" id="excludeRegistered" checked> リストに入った部分は灰色にして数えない（二重拾い防止）</label>
+      <label class="row"><input type="checkbox" id="excludeRegistered" checked> すでにリストに入れた部分は数量から除く（二重に数えないため。外すと全量）</label>
     </div>
   </aside>
 

@@ -631,7 +631,7 @@ async function runRemain() {
 async function exportRemainCsv() {
   const order = [...state.remainCells];
   if (!order.length) { toast('先に残りのスパンを選んでください', 'error'); return; }
-  const levels = [['未計測（全量）', presetDepth('none')], ['梁せい中央', presetDepth('beam')], ['スラブ下', presetDepth('slab')]]
+  const levels = [['未計測（全量）', presetDepth('none')], ['梁の中央まで', presetDepth('beam')], ['スラブ下まで', presetDepth('slab')]]
     .filter(([, d]) => d !== null);
   const cur = remainDepthValue() ?? fullDepth();
   if (!levels.some(([, d]) => d === cur)) levels.push(['入力値', cur]);
@@ -648,7 +648,7 @@ async function exportRemainCsv() {
   });
   out.push([], [`生コン車 ${$('truckM3').value} m³／台・割増 ${$('extraPct').value}%・高さ範囲 ${$('rangeText').textContent}`]);
   download(`${state.meta.source.replace(/\.ifc$/i, '')}_${stamp()}_残量一覧表.csv`, csvBlob(out));
-  toast('残量の一覧表を書き出しました', 'ok');
+  toast(`残量の一覧表を書き出しました（${SAVED_TO}）`, 'ok');
 }
 
 // タブレット用データ：全スパンの「上端からの深さ→体積」の表を計算サーバーで作り、1つのJSONに保存する
@@ -690,7 +690,8 @@ async function exportSite() {
   data.uncomputed = [...new Map(data.uncomputed.map((u) => [`${u.name}|${u.category}|${u.reason}`, u])).values()];
   const name = `${state.meta.source.replace(/\.ifc$/i, '')}_${base.title.replace(/[\s（）()]/g, '')}_現場用_${stamp()}.json`;
   download(name, new Blob([JSON.stringify(data)], { type: 'application/json' }));
-  toast(`スパン ${data.cells.length} 件・合計 ${fmt(sum)} m³ を書き出しました${missing ? `（未計算 ${missing} 件は含まれません）` : ''}`, 'ok');
+  toast(`タブレット用に、スパン ${data.cells.length} 件・合計 ${fmt(sum)} m³ を書き出しました${missing ? `（未計算 ${missing} 件は含まれません）` : ''}。` +
+    `${SAVED_TO}。メールやクラウドでタブレットに送り、残量チェックの「データを開く」で選びます`, 'ok');
 }
 
 const regionHoverGroup = new THREE.Group();
@@ -818,6 +819,7 @@ function applyRange() {
   const lowTxt = `${$('lowBase').value}${signed(Number($('lowOff').value) || 0)}`;
   const upTxt = `${$('upBase').value}${signed(Number($('upOff').value) || 0)}`;
   $('rangeText').textContent = `${lowTxt} ～ ${upTxt}（${mm(state.z0)} ～ ${mm(state.z1)} mm）`;
+  $('remainTop').textContent = `コン天＝${upTxt}（高さ範囲の上）`;
   paint();
   scheduleCompute();
 }
@@ -1340,7 +1342,7 @@ function renderResults() {
     const open = r.zones.reduce((a, z) => a + z.total, 0);
     html += `<div class="sum">工区合計 <div class="total">${fmt(sum)} m³</div>` +
       `<div class="muted">${r.zones.map((z) => `${esc(zoneName(z.label))} ${fmt(whole(z))}`).join(' ＋ ')}` +
-      `${open < sum - 0.0005 ? `　（未登録 ${fmt(open)}）` : ''}</div></div>`;
+      `${open < sum - 0.0005 ? `　（まだ入れていない分 ${fmt(open)}）` : ''}</div></div>`;
   }
   for (const z of r.zones) {
     const color = ZONE_COLORS[z.label];
@@ -1348,12 +1350,12 @@ function renderResults() {
     html += `<div class="muted">この条件の数量</div><div class="total">${fmt(whole(z))} <small>m³</small></div>`;
     if (z.excluded > 0.0005) {
       html += '<div class="breakdown">' +
-        `<span class="done">うち打設リストに登録済み（灰色表示）</span><span class="num done">${fmt(z.excluded)} m³</span>` +
-        `<span class="open">未登録（追加できる分）</span><span class="num open">${fmt(z.total)} m³</span></div>`;
+        `<span class="done">うち打設リストに入れ済み（灰色表示）</span><span class="num done">${fmt(z.excluded)} m³</span>` +
+        `<span class="open">まだ入れていない分（追加できる分）</span><span class="num open">${fmt(z.total)} m³</span></div>`;
     }
     // 常に見せるのは工区名・数量・種別内訳・未計算の警告・追加ボタンだけ。根拠は折りたたむ
     if (z.total > 0.0005) {
-      html += `<div class="muted">${z.excluded > 0.0005 ? '未登録分の内訳' : '内訳'}` +
+      html += `<div class="muted">${z.excluded > 0.0005 ? 'まだ入れていない分の内訳' : '内訳'}` +
         ' <span class="qmark" title="柱→梁→壁→スラブ→基礎→階段→その他の順で重なりを配分した参考値です。総数量は重複を除いた体積です。">？</span></div>';
     }
     html += '<table class="mini">';
@@ -1379,9 +1381,9 @@ function renderResults() {
       '</table></details>';
     if (z.total > 0.0005) {
       const zi = r.zones.indexOf(z);
-      html += `<div class="regrow"><button class="reg primary" data-reg="${zi}" title="未登録の ${fmt(z.total)} m³ を追加します">` +
+      html += `<div class="regrow"><button class="reg primary" data-reg="${zi}" title="まだ入れていない ${fmt(z.total)} m³ を追加します">` +
         // 一部が登録済みのときだけ「未登録分」と添え、全体をもう一度足すと誤解されないようにする（数量はすぐ上に出ている）
-        `＋ ${z.excluded > 0.0005 ? '未登録分を' : ''}打設リストに追加</button>`;
+        `＋ ${z.excluded > 0.0005 ? '入れていない分を' : ''}打設リストに追加</button>`;
       if (state.units.length) {
         html += `<select data-addto="${zi}"><option value="">打設リストの既存の行にまとめる…</option>` +
           state.units.map((u, i) => `<option value="${i}">区分${i + 1}「${esc(u.name)}」にまとめる</option>`).join('') + '</select>';
@@ -1618,6 +1620,8 @@ function stamp() {
   const d = new Date(), p = (n) => String(n).padStart(2, '0');
   return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}`;
 }
+// 保存先の案内（ブラウザの保存先。既定はダウンロードのフォルダ）
+const SAVED_TO = '保存先：ダウンロードのフォルダ';
 function download(name, blob) {
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
@@ -1675,7 +1679,7 @@ async function exportCsv() {
   const base = `${state.meta.source.replace(/\.ifc$/i, '')}_${stamp()}`;
   download(`${base}_打設リスト.csv`, csvBlob(list));
   setTimeout(() => download(`${base}_部材明細.csv`, csvBlob(detail)), 300); // 2つ目の保存が抑止されないよう少し空ける
-  toast('表を書き出しました（打設リスト・部材明細。Excelで開けます）', 'ok');
+  toast(`表を書き出しました（打設リスト・部材明細。Excelで開けます。${SAVED_TO}）`, 'ok');
 }
 
 function applyPlan(plan) {
@@ -1745,9 +1749,19 @@ function renderSidebar() {
     return `<tr><td>${selectable ? `<input type="checkbox" data-mat="${esc(name)}"${info.included ? ' checked' : ''}>` : '—'}</td>` +
       `<td>${esc(name)}${selectable ? '' : '<div class="muted">複数材料・材料なしは選べません</div>'}</td><td class="num">${info.count}</td></tr>`;
   }).join('');
+  updateMatSummary();
   state.categories = new Set(m.categories);
   $('categories').innerHTML = m.categories.map((c) =>
     `<label><input type="checkbox" data-cat="${esc(c)}" checked><span class="chip" style="background:${hex(CAT_COLORS[c])}"></span>${esc(c)}</label>`).join('');
+}
+
+// 「数える材料」の見出し：今の選び方が閉じたままでも分かるように
+function updateMatSummary() {
+  const def = defaultMaterials(), cur = [...state.materials];
+  const same = cur.length === def.length && def.every((n) => state.materials.has(n));
+  $('matSummary').textContent = same ? '数える材料：名前に「コンクリート」を含むもの（増し打ち含む）'
+    : !cur.length ? '数える材料：なし（選び直してください）'
+    : `数える材料：${cur.slice(0, 2).join('・')}${cur.length > 2 ? ` ほか ${cur.length - 2} 種類` : ''}（初期値から変更）`;
 }
 
 // 読込中は経過秒数を足して、止まっていないことが分かるようにする
@@ -1849,6 +1863,7 @@ $('materials').addEventListener('change', (ev) => {
   const name = ev.target.dataset.mat;
   if (name === undefined) return;
   ev.target.checked ? state.materials.add(name) : state.materials.delete(name);
+  updateMatSummary();
   paint();
   scheduleCompute();
 });

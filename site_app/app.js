@@ -2,7 +2,7 @@
 import { fmt, fullVolume, parseSiteData, presetMm, totals, remaining, truckPlan } from './calc.js';
 import { STATUS_NAME, recordCsv, stamp, zoneKeyOf, zoneTitle } from './record.js';
 
-const APP_VERSION = '1.4.3'; // sw.js の VERSION と合わせる（キャッシュで古い版が動いていないか確かめる用）
+const APP_VERSION = '1.4.4'; // sw.js の VERSION と合わせる（キャッシュで古い版が動いていないか確かめる用）
 const $ = (id) => document.getElementById(id);
 const SVGNS = 'http://www.w3.org/2000/svg';
 const CAT_COLORS = { 柱: '#c62828', 梁: '#ef6c00', 壁: '#0288d1', スラブ: '#a0a4a8', 基礎: '#6d4c41', 階段: '#6a1b9a', その他: '#546e7a' };
@@ -516,7 +516,7 @@ function setDepth(mm) {
 // 記録に書くスパン：長押ししたスパン、なければ選んでいる工区の打設中のスパン
 const depthTargets = () => (editId ? [editId]
   : [...cellEls.values()].filter(({ cell }) => inZone(cell) && statusOf(cell.id) === 'pouring').map(({ cell }) => cell.id));
-const PRESET_NAME = { slab_bottom_mm: 'スラブ下', beam_mid_mm: '梁せい中央', none: '未計測に戻す' };
+const PRESET_NAME = { slab_bottom_mm: 'スラブ下まで', beam_mid_mm: '梁の中央まで', none: '未計測に戻す' };
 // 高さの欄の値：空欄は未計測（null）
 const readDepth = () => ($('depth').value.trim() === '' ? null : Math.max(0, Number($('depth').value) || 0));
 
