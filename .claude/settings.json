@@ -1,0 +1,28 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\".venv/Scripts/python.exe\" \".claude/hooks/verify_quantity.py\"",
+            "timeout": 120
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write|Bash|PowerShell",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\".venv/Scripts/python.exe\" \".claude/hooks/guard_data.py\"",
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  }
+}

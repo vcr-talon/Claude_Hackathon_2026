@@ -25,6 +25,7 @@ def timed(label, fn):
 
 
 model = timed("load", lambda: load_model(path))
+mats = model.default_materials  # 画面・APIと同じく、材料を選ばないときはコンクリートだけ（D20）
 print(f"schema={model.schema} solids={len(model.solids)} members={len(model.members)} "
       f"(前処理 {model.load_seconds:.1f}s)")
 print("\n材料一覧（対象／除外）")
@@ -45,7 +46,7 @@ print(f"通り芯: {', '.join(a.tag for a in model.grids)}")
 # ③ 部材単体（切断なし）とIFC既存数量 NetVolume の比較
 vol_by_member: dict[str, float] = {}
 for s in model.solids:
-    if s.manifold is not None:
+    if s.manifold is not None and s.material in mats:
         vol_by_member[s.member_id] = vol_by_member.get(s.member_id, 0.0) + s.manifold.volume()
 rows = []
 for mid, v in vol_by_member.items():
@@ -66,7 +67,7 @@ for d, v, m in sorted(rows, key=lambda r: -r[0])[:8]:
 # 全体
 lo = min(s.bbox[2] for s in model.solids) - 1
 hi = max(s.bbox[5] for s in model.solids) + 1
-whole = timed("全体", lambda: compute(model.solids, lo, hi))
+whole = timed("全体", lambda: compute(model.solids, lo, hi, materials=mats))
 print(f"全体: 総体積={whole.total:.2f} m3 単純合計={whole.raw_sum:.2f} 重複控除={whole.overlap:.2f}")
 print("  種別内訳:", {k: round(v, 2) for k, v in whole.by_category.items()})
 print("  材料内訳:", {k: round(v, 2) for k, v in whole.by_material.items()})
@@ -77,11 +78,11 @@ print("\n施工階ごと（SL〜直上階SL）")
 levels = [st for st in model.storeys]
 acc = 0.0
 for a, b in zip(levels, levels[1:]):
-    r = compute(model.solids, a.elevation, b.elevation)
+    r = compute(model.solids, a.elevation, b.elevation, materials=mats)
     acc += r.total
     print(f"  {a.name:6}〜{b.name:6} {r.total:9.2f} m3 部材{len(r.members):4} 未計算{len(r.uncomputed)}")
-below = compute(model.solids, lo, levels[0].elevation).total
-above = compute(model.solids, levels[-1].elevation, hi).total
+below = compute(model.solids, lo, levels[0].elevation, materials=mats).total
+above = compute(model.solids, levels[-1].elevation, hi, materials=mats).total
 print(f"  最下階より下 {below:.2f} / 最上階より上 {above:.2f} / 合計 {acc + below + above:.2f} "
       f"(全体との差 {acc + below + above - whole.total:.2e})")
 
@@ -94,9 +95,9 @@ regions = split_regions(model.bounds, [list(line)])
 cx = (line[0][0] + line[1][0]) / 2
 cy = (model.bounds[1] + model.bounds[3]) / 2
 zones = assign_zones(regions, [ZoneSeed("A", cx - 5, cy), ZoneSeed("B", cx + 5, cy)])
-r_all = timed("5SL〜6SL 全体", lambda: compute(model.solids, z0, z1))
-r_a = timed("工区A", lambda: compute(model.solids, z0, z1, region=zones["A"]))
-r_b = timed("工区B", lambda: compute(model.solids, z0, z1, region=zones["B"]))
+r_all = timed("5SL〜6SL 全体", lambda: compute(model.solids, z0, z1, materials=mats))
+r_a = timed("工区A", lambda: compute(model.solids, z0, z1, region=zones["A"], materials=mats))
+r_b = timed("工区B", lambda: compute(model.solids, z0, z1, region=zones["B"], materials=mats))
 print(f"5SL〜6SL: 全体={r_all.total:.3f} A={r_a.total:.3f} B={r_b.total:.3f} "
       f"A+B-全体={r_a.total + r_b.total - r_all.total:.2e}")
 print("  A 種別内訳:", {k: round(v, 3) for k, v in r_a.by_category.items()})

@@ -6,3 +6,5 @@ __pycache__/
 *.pyc
 # IFC（実案件の機密を含みうる）は公開しない。サンプルを含めるときは git add -f で明示的に
 *.ifc
+# 個人の設定（許可したコマンドなど）は共有しない
+.claude/settings.local.json
