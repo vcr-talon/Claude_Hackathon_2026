@@ -71,6 +71,8 @@ input[type=number] { font: inherit; font-size: 20px; width: 110px; min-height: 4
 /* タップの説明は図に重ねず、入力欄の上に置く */
 .taphint { background: #fff3e0; border-radius: 8px; padding: 6px 10px; font-size: 15px; margin-bottom: 4px; }
 /* 目安ボタンの説明は、コン天の説明と見分けが付くよう1行あけてボタンの直前に */
+.taphint .nowrap { white-space: nowrap; }
+.hintmore { float: right; width: 28px; height: 28px; margin-left: 8px; border-radius: 50%; border: 1px solid #ffb74d; background: #fff; color: #e65100; font-weight: bold; font-size: 15px; padding: 0; }
 .presetcap { font-size: 14px; color: var(--text); margin-top: 10px; }
 .legend { position: absolute; left: 8px; bottom: 8px; display: flex; gap: 12px; align-items: center; flex-wrap: wrap;
   background: rgba(255,255,255,.92); border-radius: 8px; padding: 4px 8px; font-size: 14px; }

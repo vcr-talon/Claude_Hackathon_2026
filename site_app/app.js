@@ -2,7 +2,7 @@
 import { fmt, fullVolume, parseSiteData, presetMm, totals, remaining, truckPlan } from './calc.js';
 import { STATUS_NAME, recordCsv, stamp, zoneKeyOf, zoneTitle } from './record.js';
 
-const APP_VERSION = '1.4.2'; // sw.js の VERSION と合わせる（キャッシュで古い版が動いていないか確かめる用）
+const APP_VERSION = '1.4.3'; // sw.js の VERSION と合わせる（キャッシュで古い版が動いていないか確かめる用）
 const $ = (id) => document.getElementById(id);
 const SVGNS = 'http://www.w3.org/2000/svg';
 const CAT_COLORS = { 柱: '#c62828', 梁: '#ef6c00', 壁: '#0288d1', スラブ: '#a0a4a8', 基礎: '#6d4c41', 階段: '#6a1b9a', その他: '#546e7a' };
@@ -175,9 +175,31 @@ function buildPlan() {
   // 通り芯は建物のすぐ外までで切り、丸印（X1 などの記号）をそこに置く。全体表示は丸印まで入る範囲にする
   const r = size * 0.012, pad = size * 0.03;
   const frame = [x0 - pad, y0 - pad, x1 + pad, y1 + pad];
-  const out = pad + r * 2.6;
-  const h = y1 - y0 + 2 * (out + m), legend = h * 0.12; // 下に重なる凡例の分だけ下側を空ける
-  home = [x0 - out - m, -y1 - out - m, x1 - x0 + 2 * (out + m), h + legend];
+  // 丸印の位置。近い通り芯（X6とX7など）で丸印が重なるときは、重ならなくなるまで外へずらす
+  const placed = [], marks = [];
+  const place = (bx, by, dx, dy) => {
+    let px, py, k = 0;
+    do {
+      px = bx + dx * r * (1.4 + 2.3 * k); py = by + dy * r * (1.4 + 2.3 * k); k++;
+    } while (k < 8 && placed.some(([qx, qy]) => Math.hypot(qx - px, qy - py) < r * 2.1));
+    placed.push([px, py]);
+    return [px, py];
+  };
+  for (const g of data.grids ?? []) {
+    const seg = clipToFrame(g.start, g.end, frame);
+    if (!seg) continue;
+    const [[sx, sy], [ex, ey]] = seg, len = Math.hypot(ex - sx, ey - sy) || 1;
+    const ux = (ex - sx) / len, uy = (ey - sy) / len;
+    marks.push({ tag: g.tag, line: [sx, sy, ex, ey],
+      ends: [[sx, sy, ...place(sx, sy, -ux, -uy)], [ex, ey, ...place(ex, ey, ux, uy)]] });
+  }
+  // 全体表示は、建物と丸印が全部入る範囲。下に重なる凡例の分だけ下側を空ける
+  let [bx0, by0, bx1, by1] = [x0, y0, x1, y1];
+  for (const [px, py] of placed) {
+    bx0 = Math.min(bx0, px - r); by0 = Math.min(by0, py - r); bx1 = Math.max(bx1, px + r); by1 = Math.max(by1, py + r);
+  }
+  const h = by1 - by0 + 2 * m, legend = h * 0.12;
+  home = [bx0 - m, -by1 - m, bx1 - bx0 + 2 * m, h + legend];
   setViewBox(home);
 
   // 部材の位置（外接矩形）を種別ごとに1本のパスで薄く描く
@@ -211,16 +233,13 @@ function buildPlan() {
 
   // 通り芯と記号
   const grid = el('g', { class: 'grid' });
-  for (const g of data.grids ?? []) {
-    const seg = clipToFrame(g.start, g.end, frame);
-    if (!seg) continue;
-    const [[sx, sy], [ex, ey]] = seg, len = Math.hypot(ex - sx, ey - sy) || 1;
-    const ux = (ex - sx) / len, uy = (ey - sy) / len;
+  for (const { tag, line: [sx, sy, ex, ey], ends } of marks) {
     grid.appendChild(el('line', { x1: sx, y1: -sy, x2: ex, y2: -ey }));
-    for (const [px, py] of [[sx - ux * r * 1.4, sy - uy * r * 1.4], [ex + ux * r * 1.4, ey + uy * r * 1.4]]) {
+    for (const [lx, ly, px, py] of ends) {
+      grid.appendChild(el('line', { x1: lx, y1: -ly, x2: px, y2: -py })); // 線の端から丸印まで（ずらした分も線でつなぐ）
       grid.appendChild(el('circle', { cx: px, cy: -py, r }));
       const t = el('text', { x: px, y: -py, 'font-size': r * 1.05 });
-      t.textContent = g.tag;
+      t.textContent = tag;
       grid.appendChild(t);
     }
   }
@@ -310,11 +329,10 @@ function render() {
   $('depthLabel').textContent = edit ? `選んだスパン（${edit.label}）だけの打設済み高さ` : '柱・梁の打設済み高さ';
   $('ownBox').classList.toggle('hidden', !edit);
   const cur = edit ? depthOf(editId) : work.depth;
-  const top = `コン天＝${topName ?? '高さ範囲の上端'}。` + (cur === null ? '未計測のあいだは、柱・梁を全部残りに数えています' : '0 mm＝コン天まで打設済み');
+  const top = `コン天＝${topName ?? '高さ範囲の上端'}。` + (cur === null ? '未計測は柱・梁を全部残りに数えます' : '0 mm＝コン天まで打設済み');
   $('depthNote').textContent = edit
-    ? `${top}。ほかの打設中のスパンは共通の値（${depthText(work.depth)}）のまま`
-    : `${top}。` + (pouring ? '今打っているスパン（オレンジ）の柱・梁にだけ効きます（長押ししたスパンはそのスパンの値）'
-      : '今打っているスパンがありません（スパンをタップすると打設中になります）');
+    ? `${top}。ほかの打設中は ${depthText(work.depth)}`
+    : `${top}。` + (pouring ? 'オレンジのスパンに効きます' : 'スパンをタップすると打設中になります');
 }
 
 // 長押し：そのスパンを打設中にして、下段の打ち上がりをそのスパンだけの値にする
@@ -655,6 +673,7 @@ bindNumber('truck', 'truck');
 bindNumber('extra', 'extra');
 document.querySelectorAll('[data-preset]').forEach((b) => b.addEventListener('click', () => applyPreset(b.dataset.preset)));
 $('openHistory').addEventListener('click', openHistory);
+$('hintMore').addEventListener('click', () => $('thinNote').classList.toggle('hidden'));
 $('historyClose').addEventListener('click', () => $('history').classList.add('hidden'));
 $('shareRecord').addEventListener('click', () => shareRecord().catch((e) => toast(`記録を共有できませんでした（詳細：${e.message}）`, 'error')));
 $('ownReset').addEventListener('click', () => endOwnDepth(true));

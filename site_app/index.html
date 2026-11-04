@@ -51,8 +51,9 @@
     </div>
 
     <footer class="controls">
-      <div class="taphint">スパンをタップ：1回＝打設中　2回＝打設済み　3回＝未打設　長押し＝打設中にして高さを個別に変える<br>
-        <span class="small muted">幅2m未満の細いスパンは数字を省略しています（量は合計に入っています）</span></div>
+      <div class="taphint"><button id="hintMore" class="hintmore" aria-label="数字のないスパンについて">？</button>
+        <span class="nowrap">タップ：打設中 → 打設済み → 未打設</span>　<span class="nowrap">長押し：高さを個別に変える</span>
+        <div id="thinNote" class="small muted hidden">数字のない細いスパン（幅2m未満）も、量は合計に入っています</div></div>
       <div class="depthhead" id="depthLabel">柱・梁の打設済み高さ</div>
       <div class="row">
         <label for="depth">コン天から</label>
@@ -63,7 +64,7 @@
         <button id="ownReset" class="btn small">共通の高さに戻す</button>
       </div>
       <div id="depthNote" class="small muted"></div>
-      <div class="presetcap">目安を入れる（打設中のスパンの値。押すと上の欄に入ります）</div>
+      <div class="presetcap">目安（押すと上の欄に入ります）</div>
       <div class="row presets">
         <button class="btn" data-preset="slab_bottom_mm">スラブ下</button>
         <button class="btn" data-preset="beam_mid_mm">梁せい中央</button>

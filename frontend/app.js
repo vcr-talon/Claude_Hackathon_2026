@@ -1644,10 +1644,10 @@ async function exportCsv() {
     body: JSON.stringify({ units: state.units.map((u) => ({ name: u.name, parts: u.parts.map(partJson) })),
       exclude_registered: state.excludeRegistered, detail: true }),
   });
-  if (!res.ok) { toast(`CSVを書き出せません：${await errorDetail(res)}`, 'error'); return; }
+  if (!res.ok) { toast(`表を書き出せません：${await errorDetail(res)}`, 'error'); return; }
   const ur = await res.json();
   if (ur.units.some((u) => !u.members)) { // 画面だけ新しく、計算サーバーが古いまま動いているとき
-    toast('CSVを書き出せません。アプリが古い状態です。いったん閉じて、起動し直してください（start.bat の画面を閉じてから、もう一度起動）', 'error');
+    toast('表を書き出せません。アプリが古い状態です。いったん閉じて、起動し直してください（start.bat の画面を閉じてから、もう一度起動）', 'error');
     return;
   }
   const join = (u, key) => u.parts.map((p) => partFields(p)[key]).join(' ＋ ');
@@ -1675,7 +1675,7 @@ async function exportCsv() {
   const base = `${state.meta.source.replace(/\.ifc$/i, '')}_${stamp()}`;
   download(`${base}_打設リスト.csv`, csvBlob(list));
   setTimeout(() => download(`${base}_部材明細.csv`, csvBlob(detail)), 300); // 2つ目の保存が抑止されないよう少し空ける
-  toast('CSVを書き出しました（打設リスト・部材明細）', 'ok');
+  toast('表を書き出しました（打設リスト・部材明細。Excelで開けます）', 'ok');
 }
 
 function applyPlan(plan) {
@@ -1917,7 +1917,7 @@ $('remainBody').addEventListener('click', (ev) => {
 });
 $('exportSite').addEventListener('click', () => exportSite().catch((e) => toast(`タブレット用に書き出せません：${e.message}`, 'error')));
 $('remainCsv').addEventListener('click', () => exportRemainCsv().catch((e) => toast(`残量の一覧表を書き出せませんでした（詳細：${e.message}）`, 'error')));
-$('exportCsv').addEventListener('click', () => exportCsv().catch((e) => toast(`CSVを書き出せません：${e.message}`, 'error')));
+$('exportCsv').addEventListener('click', () => exportCsv().catch((e) => toast(`表を書き出せません：${e.message}`, 'error')));
 $('planInput').addEventListener('change', (ev) => {
   if (ev.target.files[0]) openPlan(ev.target.files[0]);
   ev.target.value = ''; // 同じファイルをもう一度選べるように
