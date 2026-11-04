@@ -239,12 +239,14 @@ def remaining(storey: str, spans: list[str], depth_mm: float | None = None, pres
               truck_m3: float = 4.25, extra_pct: float = 0) -> dict:
     """打設終盤の残り数量（m³）と生コン車の台数を計算エンジンで求める。数量・台数を自分で計算・推定せず、必ずこの道具を使うこと。
 
-    PCアプリの「4. 打設終盤の残量」と同じ計算：残りのスパンの範囲で、柱・梁・壁など（スラブ以外）は打ち上がり高さ〜上端、
+    PCアプリの「4. 打設終盤の残量」と同じ計算：残りのスパンの範囲で、柱・梁・壁など（スラブ以外）は打設済み高さ〜上端、
     スラブは全厚を数え、重なりは1回だけ数える。
     - storey：施工階（例「5SL」「5階」）
     - spans：残りのスパン。通り芯の範囲で1つずつ（例 ["X8～X9×Y1～Y2", "X9～X10×Y1～Y2"]）。複数スパンをまとめて「X8～X11×Y1～Y2」でもよい
-    - depth_mm：柱・梁の打ち上がり。コン天（その階の上のSL）から何 mm 下まで打ってあるか（0＝コン天まで打設済み＝スラブだけが残る）
-    - preset：depth_mm の代わりに「スラブ下」「梁せい中央」「未打設」（PCアプリのボタンと同じ目安。残りのスパンに掛かる部材の中央値）
+    - depth_mm：柱・梁の打設済み高さ。コン天（その階の上のSL）から何 mm 下まで打ってあるか（0＝コン天まで打設済み＝スラブだけが残る）
+    - preset：depth_mm の代わりに「スラブ下」「梁せい中央」（PCアプリのボタンと同じ目安。残りのスパンに掛かる部材の中央値）、
+      または「未計測」（柱・梁を全部残りに数える）
+    - depth_mm も preset も無いときは「未計測」として、柱・梁を全部残りに数える（画面の初期値と同じ。少なく見積もらない）
     - truck_m3：生コン車1台の積載量、extra_pct：割増（%）
     返り値の「定義」を回答に添えること。
     """
@@ -258,8 +260,8 @@ def remaining(storey: str, spans: list[str], depth_mm: float | None = None, pres
     mats = m.default_materials
     p = unicodedata.normalize("NFKC", preset).strip()
     if p:
-        if p.startswith("未打設"):
-            depth_mm, used = round((z1 - z0) * 1000), "未打設（全量）"
+        if p.startswith(("未計測", "未打設")):  # 「未打設」は前の版の言い方（そのまま受ける）
+            depth_mm, used = None, "未計測"
         elif p in PRESETS:
             cat, kind = PRESETS[p]
             depth_mm = _preset_mm(m.solids, region, z1, cat, mats, kind)
@@ -267,12 +269,14 @@ def remaining(storey: str, spans: list[str], depth_mm: float | None = None, pres
                 raise AskAgain(f"残りのスパンに{cat}が見つからないため「{p}」の目安を出せません。depth_mm で直接指定してください")
             used = p
         else:
-            raise AskAgain(f"preset「{preset}」はありません。「スラブ下」「梁せい中央」「未打設」のどれか")
+            raise AskAgain(f"preset「{preset}」はありません。「スラブ下」「梁せい中央」「未計測」のどれか")
     elif depth_mm is None:
-        raise AskAgain("柱・梁の打ち上がりを depth_mm（コン天から何 mm 下）か preset（「スラブ下」など）で指定してください")
+        used = "未計測"
     else:
         used = "数値で指定"
-    depth_mm = max(0.0, float(depth_mm))
+    # 未計測は、柱・梁を全部残りに数える（打設済み高さ＝高さ範囲の全体と同じ）
+    unmeasured = depth_mm is None
+    depth_mm = round((z1 - z0) * 1000) if unmeasured else max(0.0, float(depth_mm))
     cats = {s.category for s in m.solids}  # PCアプリの初期値（すべての種別）と同じ
     level = max(z0, z1 - depth_mm / 1000)
     parts = []
@@ -283,7 +287,8 @@ def remaining(storey: str, spans: list[str], depth_mm: float | None = None, pres
     need, trucks = truck_plan(res.total, truck_m3, extra_pct)
     return {
         "条件": {"施工階": label, "残りのスパン": items, "スパン数": len(items),
-               "柱・梁の打ち上がり": f"コン天 −{depth_mm:,.0f} mm（{used}）"},
+               "柱・梁の打設済み高さ": "未計測（全量で計算）" if unmeasured
+               else f"{f'コン天から {depth_mm:,.0f} mm' if depth_mm else 'コン天まで'}（{used}）"},
         "残り数量m3": res.total,
         **({"割増込みm3": need} if extra_pct else {}),
         "生コン車": trucks,
