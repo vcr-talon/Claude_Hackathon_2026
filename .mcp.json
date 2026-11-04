@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "qto": {
+      "command": ".venv/Scripts/python.exe",
+      "args": ["backend/mcp_server.py", "hackathon_model.ifc"]
+    }
+  }
+}

@@ -14,6 +14,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+mcp = ["mcp>=1.2,<2"]  # 数量エンジンのMCPサーバー（backend/mcp_server.py）。2.x は FastMCP の名前と作りが変わったため 1.x に固定
 dev = ["pytest", "playwright"]  # playwright：ui-review・site-export-check スキルが画面を自動で動かす（PCのEdgeを使う）
 
 [tool.pytest.ini_options]
