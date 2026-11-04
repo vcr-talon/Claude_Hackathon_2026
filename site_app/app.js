@@ -1,7 +1,7 @@
 // 現場残量アプリの画面。数量の計算は calc.js（PCアプリで作った表を引いて足すだけ）
 import { fmt, fullVolume, parseSiteData, presetMm, totals, remaining, truckPlan } from './calc.js';
 
-const APP_VERSION = '1.2.2'; // sw.js の VERSION と合わせる（キャッシュで古い版が動いていないか確かめる用）
+const APP_VERSION = '1.3.0'; // sw.js の VERSION と合わせる（キャッシュで古い版が動いていないか確かめる用）
 const $ = (id) => document.getElementById(id);
 const SVGNS = 'http://www.w3.org/2000/svg';
 const CAT_COLORS = { 柱: '#c62828', 梁: '#ef6c00', 壁: '#0288d1', スラブ: '#a0a4a8', 基礎: '#6d4c41', 階段: '#6a1b9a', その他: '#546e7a' };
@@ -9,6 +9,7 @@ const NEXT = { todo: 'pouring', pouring: 'done', done: 'todo' }; // タップで
 const EMPTY = 0.0005; // m³。これ未満のスパン（建物の外の帯など）はタップの対象にしない
 const THIN_SPAN = 2.0; // m。短い辺がこれ未満のスパンは数字を出さない（ふつうのスパンは3〜8m。通り芯が近い間や端の帯）
 const TAP_SLOP = 10; // px。指を離したときの移動がこれ未満ならタップ
+const LONG_PRESS_MS = 550; // これだけ押し続けると長押し（そのスパンだけの打ち上がりを入れる）
 const STORE = 'site.work.'; // localStorage：スパンの状態と履歴（データファイル本体は保存しない）
 const LAST = 'site.last';
 const UNDO_MAX = 200;
@@ -21,6 +22,7 @@ let home = null; // 全体表示の viewBox
 let vb = null; // いまの viewBox [x, y, w, h]（y は上下反転した座標）
 let zones = []; // 工区で切ったデータのとき [{key, name}]。切り替えたときは選んだ工区だけを数え、他の工区は選べない
 let bulk = false; // 「打設済みをまとめて」：なぞったスパンを一度に打設済みにする
+let editId = null; // 長押しで選んだスパン。下段の打ち上がりはこのスパンだけに効く（null なら打設中の全スパン共通）
 
 // スパンのIDの「#A」「#A-2」から工区のキーを取る（工区で切っていなければ null）
 const zoneOf = (cell) => (cell.id.includes('#') ? cell.id.split('#')[1].replace(/-\d+$/, '') : null);
@@ -51,6 +53,7 @@ function undo() {
   const prev = work.undo.pop();
   if (!prev) return;
   Object.assign(work, prev);
+  if (editId && statusOf(editId) !== 'pouring') editId = null; // 戻した結果、打設中でなくなったら入力を終える
   save();
   syncInputs();
   updateCells();
@@ -92,6 +95,7 @@ async function openFile(file) {
 
 function start(d) {
   data = d;
+  editId = null;
   key = `${d.source}|${d.title}|${d.exported_at}`;
   const saved = load(STORE + key);
   work = saved ?? { statuses: {}, depth: 0, cellDepth: {}, truck: d.truck_m3 ?? 4.25, extra: d.extra_pct ?? 0, undo: [], updated: null };
@@ -211,6 +215,8 @@ function renderZoneTabs() {
     b.textContent = zoneLabel(z);
     b.addEventListener('click', () => {
       work.zone = z.key;
+      editId = null; // 別の工区のスパンの入力は続けない
+      syncInputs();
       save();
       renderZoneTabs();
       updateCells();
@@ -243,7 +249,9 @@ function updateCells() {
       continue;
     }
     const s = statusOf(id);
-    path.setAttribute('class', `cell ${s}${work.cellDepth[id] !== undefined ? ' own' : ''}`);
+    // 自分の打ち上がりを持つ打設中のスパンは縁取り、いま入力しているスパンは青で
+    const own = s === 'pouring' && work.cellDepth[id] !== undefined ? ' own' : '';
+    path.setAttribute('class', `cell ${s}${own}${id === editId ? ' editing' : ''}`);
     text.setAttribute('class', `cellnum ${s}`);
     const v = remaining(cell, s, depthOf(id), data);
     text.textContent = s === 'done' || thin || v < 0.05 ? '' : fmt(v, 1); // 0.0 と出るごく小さいスパンも数字を出さない
@@ -263,13 +271,45 @@ function render() {
   $('restInfo').textContent = `残り ${rest} スパン${pouring ? `（うち打設中 ${pouring}）` : ''}`;
   $('undo').disabled = !work.undo.length;
   const topName = (data.storeys ?? []).find((s) => Math.abs(s.elevation - data.z1) < 0.005)?.name;
-  $('depthNote').textContent = `コン天＝${topName ?? '高さ範囲の上端'}の高さ。0 mm なら天端まで打ち上がり。` +
-    (pouring ? 'この高さは、今打っているスパン（オレンジ）の柱・梁にだけ効きます（打設中が複数なら全部に同じ値）'
-      : '今打っているスパンがありません（スパンをタップすると打設中になります）');
+  const edit = editId && cellEls.get(editId)?.cell;
+  $('depthLabel').textContent = edit ? `${edit.label} だけの打ち上がり：コン天 −` : '柱・梁の打ち上がり：コン天 −';
+  $('ownBox').classList.toggle('hidden', !edit);
+  $('depthNote').textContent = edit
+    ? `このスパンだけの高さです（共通の ${work.depth.toLocaleString('ja-JP')} mm より優先）。コン天＝${topName ?? '高さ範囲の上端'}`
+    : `コン天＝${topName ?? '高さ範囲の上端'}の高さ。0 mm なら天端まで打ち上がり。` +
+      (pouring ? 'この高さは、今打っているスパン（オレンジ）の柱・梁にだけ効きます（打設中が複数なら全部に同じ値。長押ししたスパンはそのスパンの値）'
+        : '今打っているスパンがありません（スパンをタップすると打設中になります）');
+}
+
+// 長押し：そのスパンを打設中にして、下段の打ち上がりをそのスパンだけの値にする
+function startOwnDepth(id) {
+  if (!cellEls.has(id) || !inZone(cellEls.get(id).cell)) return;
+  if (statusOf(id) !== 'pouring') {
+    pushUndo();
+    work.statuses[id] = 'pouring';
+    save();
+  }
+  editId = id;
+  navigator.vibrate?.(30); // 長押しになったことを指に伝える（使える端末だけ）
+  syncInputs();
+  updateCells();
+  render();
+}
+
+function endOwnDepth(resetToCommon) {
+  if (resetToCommon && editId && work.cellDepth[editId] !== undefined) {
+    pushUndo();
+    delete work.cellDepth[editId];
+    save();
+  }
+  editId = null;
+  syncInputs();
+  updateCells();
+  render();
 }
 
 function syncInputs() {
-  $('depth').value = work.depth;
+  $('depth').value = editId ? depthOf(editId) : work.depth;
   $('truck').value = work.truck;
   $('extra').value = work.extra;
 }
@@ -280,6 +320,7 @@ function tapCell(id) {
   pushUndo();
   const next = NEXT[statusOf(id)];
   if (next === 'todo') delete work.statuses[id]; else work.statuses[id] = next;
+  if (id === editId && next !== 'pouring') { editId = null; syncInputs(); } // 打設中でなくなったら、そのスパンの入力は終える
   save();
   updateCells();
   render();
@@ -349,8 +390,19 @@ function onDown(e) {
   if (pointers.size === 1 && bulk) { // まとめて選択中：1本指はなぞり（2本指の拡大・移動はそのまま）
     gesture = { type: 'paint', ids: new Set(), to: null, last: null };
     paintTo(e.clientX, e.clientY);
-  } else if (pointers.size === 1) gesture = { type: 'tap', start: { x: e.clientX, y: e.clientY }, vb: [...vb] };
-  else if (pointers.size === 2) {
+  } else if (pointers.size === 1) {
+    const start = { x: e.clientX, y: e.clientY };
+    gesture = { type: 'tap', start, vb: [...vb] };
+    // 指を動かさずに押し続けたら長押し（指を離したときのタップにはしない）
+    gesture.timer = setTimeout(() => {
+      if (gesture?.type !== 'tap') return;
+      const id = cellAtScreen(start.x, start.y);
+      if (!id) return;
+      gesture.type = 'long';
+      startOwnDepth(id);
+    }, LONG_PRESS_MS);
+  } else if (pointers.size === 2) {
+    clearTimeout(gesture?.timer);
     if (gesture?.type === 'paint' && gesture.to) save();
     const [a, b] = [...pointers.values()];
     gesture = { type: 'pinch', d0: dist(a, b), m0: mid(a, b), vb: [...vb] };
@@ -361,7 +413,10 @@ function onMove(e) {
   pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
   if (!gesture) return;
   if (gesture.type === 'paint') { paintTo(e.clientX, e.clientY); return; }
-  if (gesture.type === 'tap' && Math.hypot(e.clientX - gesture.start.x, e.clientY - gesture.start.y) >= TAP_SLOP) gesture.type = 'pan';
+  if (gesture.type === 'tap' && Math.hypot(e.clientX - gesture.start.x, e.clientY - gesture.start.y) >= TAP_SLOP) {
+    clearTimeout(gesture.timer);
+    gesture.type = 'pan';
+  }
   if (gesture.type === 'pan') {
     const s = toWorld(0, 0, gesture.vb).s;
     setViewBox([gesture.vb[0] - (e.clientX - gesture.start.x) * s, gesture.vb[1] - (e.clientY - gesture.start.y) * s, gesture.vb[2], gesture.vb[3]]);
@@ -378,6 +433,7 @@ function onMove(e) {
 function onUp(e) {
   if (!pointers.has(e.pointerId)) return;
   pointers.delete(e.pointerId);
+  clearTimeout(gesture?.timer);
   if (gesture?.type === 'paint' && gesture.to) save();
   if (gesture?.type === 'tap' && e.type === 'pointerup') {
     const id = e.target.closest?.('[data-id]')?.dataset.id;
@@ -389,12 +445,18 @@ function onUp(e) {
 }
 
 // ---------- 入力 ----------
+// 打ち上がりの値を書く先：長押ししたスパンがあればそのスパンだけ、なければ打設中の全スパン共通
+function setDepth(mm) {
+  if (editId) work.cellDepth[editId] = mm; else work.depth = mm;
+}
+
 function bindNumber(id, field) {
   let pushed = false;
   $(id).addEventListener('focus', () => { pushed = false; });
   $(id).addEventListener('input', () => {
     if (!pushed) { pushUndo(); pushed = true; } // 入力欄1回分を1つの取り消し単位に
-    work[field] = Math.max(0, Number($(id).value) || 0);
+    const v = Math.max(0, Number($(id).value) || 0);
+    if (field === 'depth') setDepth(v); else work[field] = v;
     save();
     updateCells();
     render();
@@ -407,11 +469,14 @@ function applyPreset(kind) {
   else {
     const mine = [...cellEls.values()].map(({ cell }) => cell).filter(inZone);
     const pouring = mine.filter((c) => statusOf(c.id) === 'pouring');
-    mm = presetMm(pouring.length ? pouring : mine, kind);
-    if (mm === null) { toast(`打設中のスパンに${kind === 'slab_bottom_mm' ? 'スラブ' : '梁'}がありません。mm を直接入れてください`, 'error'); return; }
+    // 長押ししたスパンがあればそのスパンの値、なければ打設中のスパン（なければ全スパン）の中央値
+    const target = editId ? [cellEls.get(editId).cell] : pouring.length ? pouring : mine;
+    mm = presetMm(target, kind);
+    const where = editId ? 'このスパン' : '打設中のスパン';
+    if (mm === null) { toast(`${where}に${kind === 'slab_bottom_mm' ? 'スラブ' : '梁'}がありません。mm を直接入れてください`, 'error'); return; }
   }
   pushUndo();
-  work.depth = mm;
+  setDepth(mm);
   syncInputs();
   save();
   updateCells();
@@ -475,6 +540,9 @@ bindNumber('depth', 'depth');
 bindNumber('truck', 'truck');
 bindNumber('extra', 'extra');
 document.querySelectorAll('[data-preset]').forEach((b) => b.addEventListener('click', () => applyPreset(b.dataset.preset)));
+$('ownReset').addEventListener('click', () => endOwnDepth(true));
+$('ownClose').addEventListener('click', () => endOwnDepth(false));
+svg.addEventListener('contextmenu', (e) => e.preventDefault()); // 長押しでブラウザのメニューを出さない
 $('openOther').addEventListener('click', showStart);
 $('showMissing').addEventListener('click', showMissing);
 $('missingClose').addEventListener('click', () => $('missing').classList.add('hidden'));

@@ -51,11 +51,15 @@
     </div>
 
     <footer class="controls">
-      <div class="taphint">スパンをタップ：1回＝打設中　2回＝打設済み　3回＝未打設に戻す<br>
+      <div class="taphint">スパンをタップ：1回＝打設中　2回＝打設済み　3回＝未打設に戻す　長押し＝そのスパンだけ高さを変える<br>
         <span class="small muted">幅2m未満の細いスパンは数字を省略しています（量は合計に入っています）</span></div>
       <div class="row">
-        <label for="depth">柱・梁の打ち上がり：コン天 −</label>
+        <label for="depth" id="depthLabel">柱・梁の打ち上がり：コン天 −</label>
         <input id="depth" type="number" inputmode="numeric" min="0" step="10" value="0"><span>mm</span>
+      </div>
+      <div id="ownBox" class="row hidden">
+        <button id="ownReset" class="btn small">共通の値に戻す</button>
+        <button id="ownClose" class="btn small">閉じる</button>
       </div>
       <div id="depthNote" class="small muted"></div>
       <div class="presetcap">目安を入れる（打設中のスパンの値。押すと上の欄に入ります）</div>

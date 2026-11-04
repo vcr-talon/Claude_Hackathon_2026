@@ -54,6 +54,14 @@ test('状態の混在：予定＝残り＋打設済み', () => {
   assert.equal(t.restCount, 1);
 });
 
+test('スパンごとの打ち上がり（長押しで入れた値）は、そのスパンだけに効く', () => {
+  // a は共通の 25 mm、b だけ長押しで 110 mm にしたとき
+  const own = { b: 110 };
+  const t = totals(DATA, () => 'pouring', (id) => own[id] ?? 25);
+  near(t.remaining, remaining(DATA.cells[0], 'pouring', 25, DATA) + remaining(DATA.cells[1], 'pouring', 110, DATA));
+  near(t.remaining, (0.5 + 1.5) + ((0.8 + 1.0) / 2 + 3.0)); // b は深さ 0.10〜0.12 の中点
+});
+
 test('打ち上がり高さの目安は対象スパンの中央値（値のないスパンは除く）', () => {
   assert.equal(presetMm(DATA.cells, 'slab_bottom_mm'), 200); // [180, 200] の上側
   assert.equal(presetMm(DATA.cells, 'beam_mid_mm'), 300);

@@ -88,6 +88,9 @@ input[type=number] { font: inherit; font-size: 20px; width: 110px; min-height: 4
 .cell.done { fill: var(--done); fill-opacity: .8; }
 .cell.empty { fill: none; stroke: #cfd8dc; pointer-events: none; }
 .cell.own { stroke: #e65100; stroke-width: 3; }
+.cell.editing { stroke: var(--accent); stroke-width: 5; } /* 長押しで高さを入れているスパン */
+.plan { -webkit-touch-callout: none; } /* iPad の長押しメニューを出さない */
+#depthLabel { font-weight: bold; }
 .cell.other { fill: #eceff1; fill-opacity: .7; stroke: #cfd8dc; pointer-events: none; } /* 選んでいない工区 */
 .bline { fill: none; stroke: #d50000; stroke-width: 3; vector-effect: non-scaling-stroke; pointer-events: none; }
 .cellnum { fill: #1f2933; font-weight: bold; text-anchor: middle; dominant-baseline: central; pointer-events: none; }
