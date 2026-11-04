@@ -65,8 +65,8 @@
         <button class="btn" data-preset="none">未打設（全量）</button>
       </div>
       <div class="row">
-        <label for="truck">生コン車1台の積載量</label>
-        <input id="truck" type="number" inputmode="decimal" min="0.25" step="0.25"><span>m³</span>
+        <label for="truck">生コン車</label>
+        <input id="truck" type="number" inputmode="decimal" min="0.25" step="0.25"><span>m³／台</span>
         <label for="extra">割増（ロス分）</label>
         <input id="extra" type="number" inputmode="decimal" min="0" step="1"><span>%</span>
       </div>
@@ -89,8 +89,8 @@
   <div id="settings" class="sheet hidden">
     <div class="sheetbody">
       <h2>設定</h2>
-      <p>アプリの版：<b id="appVersion"></b>（新しい版に入れ替わったかの確認用）</p>
-      <p class="small muted">データはこの端末の中だけで扱い、どこにも送信しません。作業の状態はこの端末に自動で保存します。</p>
+      <p>アプリの版：<b id="appVersion"></b></p>
+      <p class="small muted">データはこの端末の中だけで扱い、自動で保存します</p>
       <h3>不具合の記録</h3>
       <p class="small muted">うまく動かないときは、この内容をコピーして担当者に送ってください</p>
       <textarea id="errorLog" class="errorlog" readonly></textarea>

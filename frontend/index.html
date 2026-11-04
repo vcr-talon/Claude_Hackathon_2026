@@ -37,7 +37,7 @@
 
     <section>
       <h2>2. 工区割（打設を分けるときだけ）</h2>
-      <div class="muted">フロアを一度に打つならここは飛ばして、右の数量をそのまま打設リストに追加できます</div>
+      <div class="muted">工区割がない場合、右の数量の「打設リストに追加」をクリック</div>
       <div class="modes">
         <button data-mode="boundary" class="mode">境界線を引く</button>
         <button data-mode="zone" class="mode">工区名を付ける</button>
@@ -79,14 +79,14 @@
     <section>
       <h2>4. 打設終盤の残量（当日）</h2>
       <div class="filebtns"><button id="exportSite" class="filebtn">タブレット用に書き出す</button></div>
-      <div class="muted">いまの条件の全スパンの数量を保存します。スパンを選ぶ必要はありません。当日はタブレットの「残量チェック」で開き、打設済みのスパンを押していきます</div>
+      <div class="muted">全スパンの数量を保存します（スパンの選択は不要）。当日はタブレットで開きます</div>
       <div class="modes"><button data-mode="remain" class="mode">PCで残りのスパンを選ぶ</button></div>
       <div id="remainHelp" class="help hidden">平面図で残りのスパンを打設する順にタップ（もう一度タップで外す）。柱・梁は下の高さまで打設済みとして計算します</div>
       <div id="remainBody" class="hidden">
         <div class="row">柱・梁の打ち上がり：コン天 −<input id="remainDepth" type="number" step="10" min="0" value="0">mm</div>
-        <div class="muted">目安を入れる（選んだスパンの値。押すと上の欄に入ります）</div>
+        <div class="muted">コン天から打設済みコンクリートまでの目安高さ</div>
         <div class="row presets"><button data-preset="slab">スラブ下</button><button data-preset="beam">梁せい中央</button><button data-preset="none">未打設（全量）</button></div>
-        <div class="row">生コン車1台の積載量 <input id="truckM3" type="number" step="0.25" min="0.25" value="4.25">m³　割増（ロス分） <input id="extraPct" type="number" step="1" min="0" value="0">%</div>
+        <div class="row">生コン車 <input id="truckM3" type="number" step="0.25" min="0.25" value="4.25">m³／台　割増（ロス分） <input id="extraPct" type="number" step="1" min="0" value="0">%</div>
         <div id="remainResult" class="remain"></div>
         <div class="filebtns">
           <button id="remainCsv" class="filebtn" title="残りのスパン数ごと・打ち上がり高さごとの残量と台数の表（印刷して持ち出す用）">残量の一覧表（CSV）を書き出す</button>
@@ -120,7 +120,7 @@
     </div>
     <div class="pane-bottom">
       <div class="listhead"><h2>打設リスト</h2><div id="listTotal"></div></div>
-      <div id="unitHelp" class="help">上の「打設リストに追加」で、いまの条件の数量をここに積み上げます。上階のパラペットなどは、既存の行に追加して同じ打設にまとめられます</div>
+      <div id="unitHelp" class="help">上の「打設リストに追加」で数量を積み上げます。パラペットなどは既存の行にまとめられます</div>
       <ul id="unitList" class="list units"></ul>
       <div id="unitSummary"></div>
       <button id="exportCsv" class="filebtn hidden" title="打設リストと部材明細の2つのCSVを保存します">CSVで書き出す</button>
