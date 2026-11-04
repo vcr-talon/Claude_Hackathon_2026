@@ -84,9 +84,9 @@
       <div id="remainHelp" class="help hidden">平面図で残りのスパンを打設する順にタップ（もう一度タップで外す）。柱・梁は下の高さまで打設済みとして計算します</div>
       <div id="remainBody" class="hidden">
         <div class="depthhead">柱・梁の打設済み高さ</div>
-        <div class="row">コン天から <input id="remainDepth" type="number" step="10" min="0" value="0"> mm</div>
-        <div class="muted">0 mm＝コン天まで打設済み</div>
-        <div class="row presets"><button data-preset="slab">スラブ下</button><button data-preset="beam">梁せい中央</button><button data-preset="none">未打設（全量）</button></div>
+        <div class="row">コン天から <input id="remainDepth" type="number" step="10" min="0" placeholder="未計測"> mm</div>
+        <div class="muted">未計測（空欄）のあいだは柱・梁を全部残りに数えます。0 mm＝コン天まで打設済み</div>
+        <div class="row presets"><button data-preset="slab">スラブ下</button><button data-preset="beam">梁せい中央</button><button data-preset="none">未計測に戻す</button></div>
         <div class="row nowrap">生コン車 <input id="truckM3" type="number" step="0.25" min="0.25" value="4.25"> m³／台</div>
         <div class="row nowrap">割増（ロス分） <input id="extraPct" type="number" step="1" min="0" value="0"> %</div>
         <div id="remainResult" class="remain"></div>

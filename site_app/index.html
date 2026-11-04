@@ -56,7 +56,7 @@
       <div class="depthhead" id="depthLabel">柱・梁の打設済み高さ</div>
       <div class="row">
         <label for="depth">コン天から</label>
-        <input id="depth" type="number" inputmode="numeric" min="0" step="10" value="0"><span>mm</span>
+        <input id="depth" type="number" inputmode="numeric" min="0" step="10" placeholder="未計測"><span>mm</span>
       </div>
       <div id="ownBox" class="row hidden">
         <button id="ownClose" class="btn small">この高さで閉じる</button>
@@ -67,7 +67,7 @@
       <div class="row presets">
         <button class="btn" data-preset="slab_bottom_mm">スラブ下</button>
         <button class="btn" data-preset="beam_mid_mm">梁せい中央</button>
-        <button class="btn" data-preset="none">未打設（全量）</button>
+        <button class="btn" data-preset="none">未計測に戻す</button>
       </div>
       <div class="row">
         <label for="truck">生コン車</label>

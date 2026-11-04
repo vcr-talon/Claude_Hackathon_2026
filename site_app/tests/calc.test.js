@@ -85,3 +85,10 @@ test('このアプリ用でないファイルは開かない', () => {
   assert.throws(() => parseSiteData('壊れたファイル'), /このアプリ用のデータではありません/);
   assert.equal(parseSiteData(JSON.stringify(DATA)).cells.length, 2);
 });
+
+test('打設中でも高さが未計測（null）なら、柱・梁を全部残りに数える（少なく見積もらない）', () => {
+  for (const c of DATA.cells) near(remaining(c, 'pouring', null, DATA), fullVolume(c));
+  near(totals(DATA, () => 'pouring', () => null).remaining, sum('todo').remaining);
+  // 0 mm（コン天まで打設済み）はスラブだけが残る。未計測とは違う
+  near(remaining(DATA.cells[0], 'pouring', 0, DATA), 1.5);
+});

@@ -54,3 +54,10 @@ test('工区のキーと表示名', () => {
   assert.equal(zoneTitle(DATA, 'A'), 'A工区');
   assert.equal(zoneTitle(DATA, 'B'), '東側');
 });
+
+test('高さが未計測の打設中は、履歴にも最終状態にも「未計測」と出し、全量を残りにする', () => {
+  const work = { log: [{ at: '2026-11-04T10:00:00+09:00', zone: '東側', action: '打設中', spans: ['X2〜X3×Y1〜Y2（東側）'], depthMm: null, remaining: 7.5 }] };
+  const lines = recordCsv(DATA, work, { statusOf: (id) => (id === '1,0#B' ? 'pouring' : 'todo'), depthOf: () => null }).slice(1).split('\r\n');
+  assert.ok(lines.some((l) => l.endsWith(',東側,打設中,X2〜X3×Y1〜Y2（東側）,未計測,7.500')));
+  assert.ok(lines.includes('東側,X2〜X3×Y1〜Y2（東側）,打設中,未計測,4.000,4.000'));
+});

@@ -1,6 +1,6 @@
 // オフラインでも開けるよう、アプリ本体（HTML・JS・CSS・アイコン）だけを保存する。データファイルは保存しない
 // 電波があるときは常に最新版を取りに行き（古い版が残らない）、圏外のときだけ保存した版を使う
-const VERSION = '1.4.1'; // app.js の APP_VERSION と合わせる
+const VERSION = '1.4.2'; // app.js の APP_VERSION と合わせる
 const CACHE = `site-app-${VERSION}`;
 const SHELL = ['./', './index.html', './app.js', './calc.js', './record.js', './style.css', './manifest.webmanifest',
   './icons/icon-192.png', './icons/icon-512.png'];

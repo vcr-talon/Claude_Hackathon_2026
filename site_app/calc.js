@@ -26,10 +26,11 @@ export function interp(fromTop, step, height, dMm) {
 export const fullVolume = (cell) => cell.from_top[cell.from_top.length - 1] + cell.slab;
 
 // スパンの状態：'todo'（未打設）・'pouring'（打設中）・'done'（打設済み）
-// 打設中は、柱・梁を上端から dMm まで打設済みとして、その上の柱・梁とスラブの全厚が残る
+// 打設中は、柱・梁を上端から dMm まで打設済みとして、その上の柱・梁とスラブの全厚が残る。
+// dMm が null（高さ未計測）のときは、少なく見積もらないよう柱・梁を全部残りに数える
 export function remaining(cell, status, dMm, data) {
   if (status === 'done') return 0;
-  if (status !== 'pouring') return fullVolume(cell);
+  if (status !== 'pouring' || dMm === null || dMm === undefined) return fullVolume(cell);
   return interp(cell.from_top, data.step, data.z1 - data.z0, dMm) + cell.slab;
 }
 

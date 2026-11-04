@@ -2,7 +2,7 @@
 import { fmt, fullVolume, parseSiteData, presetMm, totals, remaining, truckPlan } from './calc.js';
 import { STATUS_NAME, recordCsv, stamp, zoneKeyOf, zoneTitle } from './record.js';
 
-const APP_VERSION = '1.4.1'; // sw.js の VERSION と合わせる（キャッシュで古い版が動いていないか確かめる用）
+const APP_VERSION = '1.4.2'; // sw.js の VERSION と合わせる（キャッシュで古い版が動いていないか確かめる用）
 const $ = (id) => document.getElementById(id);
 const SVGNS = 'http://www.w3.org/2000/svg';
 const CAT_COLORS = { 柱: '#c62828', 梁: '#ef6c00', 壁: '#0288d1', スラブ: '#a0a4a8', 基礎: '#6d4c41', 階段: '#6a1b9a', その他: '#546e7a' };
@@ -110,7 +110,8 @@ function start(d) {
   editId = null;
   key = `${d.source}|${d.title}|${d.exported_at}`;
   const saved = load(STORE + key);
-  work = saved ?? { statuses: {}, depth: 0, cellDepth: {}, truck: d.truck_m3 ?? 4.25, extra: d.extra_pct ?? 0, undo: [], updated: null };
+  // depth：柱・梁の打設済み高さ（共通）。null＝未計測
+  work = saved ?? { statuses: {}, depth: null, cellDepth: {}, truck: d.truck_m3 ?? 4.25, extra: d.extra_pct ?? 0, undo: [], updated: null };
   // 工区の一覧（書き出しに無い古いファイルでも、スパンのIDから拾う）
   zones = d.zones?.length ? d.zones : [...new Set(d.cells.map(zoneOf).filter(Boolean))].map((k) => ({ key: k, name: k }));
   if (!zones.some((z) => z.key === work.zone)) work.zone = zones[0]?.key ?? null;
@@ -271,7 +272,9 @@ function setViewBox(v) {
 
 // ---------- 表示の更新（平面図は作り直さず、色と数字だけ書き換える） ----------
 const statusOf = (id) => work.statuses[id] ?? 'todo';
-const depthOf = (id) => work.cellDepth[id] ?? work.depth;
+// そのスパンの打設済み高さ（mm）。長押しで個別に入れた値（未計測に戻した null も含む）があればそれ、なければ共通の値
+const hasOwnDepth = (id) => Object.hasOwn(work.cellDepth, id);
+const depthOf = (id) => (hasOwnDepth(id) ? work.cellDepth[id] : work.depth);
 
 function updateCells() {
   for (const [id, { path, text, cell, thin }] of cellEls) {
@@ -282,7 +285,7 @@ function updateCells() {
     }
     const s = statusOf(id);
     // 自分の打ち上がりを持つ打設中のスパンは縁取り、いま入力しているスパンは青で
-    const own = s === 'pouring' && work.cellDepth[id] !== undefined ? ' own' : '';
+    const own = s === 'pouring' && hasOwnDepth(id) ? ' own' : '';
     path.setAttribute('class', `cell ${s}${own}${id === editId ? ' editing' : ''}`);
     text.setAttribute('class', `cellnum ${s}`);
     const v = remaining(cell, s, depthOf(id), data);
@@ -306,9 +309,10 @@ function render() {
   const edit = editId && cellEls.get(editId)?.cell;
   $('depthLabel').textContent = edit ? `選んだスパン（${edit.label}）だけの打設済み高さ` : '柱・梁の打設済み高さ';
   $('ownBox').classList.toggle('hidden', !edit);
-  const top = `コン天＝${topName ?? '高さ範囲の上端'}。0 mm＝コン天まで打設済み`;
+  const cur = edit ? depthOf(editId) : work.depth;
+  const top = `コン天＝${topName ?? '高さ範囲の上端'}。` + (cur === null ? '未計測のあいだは、柱・梁を全部残りに数えています' : '0 mm＝コン天まで打設済み');
   $('depthNote').textContent = edit
-    ? `${top}。ほかの打設中のスパンは共通の ${work.depth.toLocaleString('ja-JP')} mm のまま`
+    ? `${top}。ほかの打設中のスパンは共通の値（${depthText(work.depth)}）のまま`
     : `${top}。` + (pouring ? '今打っているスパン（オレンジ）の柱・梁にだけ効きます（長押ししたスパンはそのスパンの値）'
       : '今打っているスパンがありません（スパンをタップすると打設中になります）');
 }
@@ -330,7 +334,7 @@ function startOwnDepth(id) {
 }
 
 function endOwnDepth(resetToCommon) {
-  if (resetToCommon && editId && work.cellDepth[editId] !== undefined) {
+  if (resetToCommon && editId && hasOwnDepth(editId)) {
     pushUndo();
     delete work.cellDepth[editId];
     logEvent('そのスパンの高さを共通に戻す', [editId], work.depth);
@@ -343,7 +347,7 @@ function endOwnDepth(resetToCommon) {
 }
 
 function syncInputs() {
-  $('depth').value = editId ? depthOf(editId) : work.depth;
+  $('depth').value = (editId ? depthOf(editId) : work.depth) ?? ''; // 未計測は空欄（「未計測」と薄く出る）
   $('truck').value = work.truck;
   $('extra').value = work.extra;
 }
@@ -494,15 +498,16 @@ function setDepth(mm) {
 // 記録に書くスパン：長押ししたスパン、なければ選んでいる工区の打設中のスパン
 const depthTargets = () => (editId ? [editId]
   : [...cellEls.values()].filter(({ cell }) => inZone(cell) && statusOf(cell.id) === 'pouring').map(({ cell }) => cell.id));
-const PRESET_NAME = { slab_bottom_mm: 'スラブ下', beam_mid_mm: '梁せい中央', none: '未打設（全量）' };
+const PRESET_NAME = { slab_bottom_mm: 'スラブ下', beam_mid_mm: '梁せい中央', none: '未計測に戻す' };
+// 高さの欄の値：空欄は未計測（null）
+const readDepth = () => ($('depth').value.trim() === '' ? null : Math.max(0, Number($('depth').value) || 0));
 
 function bindNumber(id, field) {
   let pushed = false;
   $(id).addEventListener('focus', () => { pushed = false; });
   $(id).addEventListener('input', () => {
     if (!pushed) { pushUndo(); pushed = true; } // 入力欄1回分を1つの取り消し単位に
-    const v = Math.max(0, Number($(id).value) || 0);
-    if (field === 'depth') setDepth(v); else work[field] = v;
+    if (field === 'depth') setDepth(readDepth()); else work[field] = Math.max(0, Number($(id).value) || 0);
     save();
     updateCells();
     render();
@@ -511,7 +516,7 @@ function bindNumber(id, field) {
 
 function applyPreset(kind) {
   let mm;
-  if (kind === 'none') mm = Math.round((data.z1 - data.z0) * 1000);
+  if (kind === 'none') mm = null;
   else {
     const mine = [...cellEls.values()].map(({ cell }) => cell).filter(inZone);
     const pouring = mine.filter((c) => statusOf(c.id) === 'pouring');
@@ -523,7 +528,7 @@ function applyPreset(kind) {
   }
   pushUndo();
   setDepth(mm);
-  logEvent(`打設済み高さ：${PRESET_NAME[kind]}`, depthTargets(), mm);
+  logEvent(kind === 'none' ? '打設済み高さ：未計測に戻す' : `打設済み高さ：${PRESET_NAME[kind]}`, depthTargets(), mm);
   syncInputs();
   save();
   updateCells();
@@ -567,7 +572,7 @@ function clearWork() {
 }
 
 // ---------- 記録の画面と共有 ----------
-const depthText = (mm) => (mm ? `コン天から ${mm.toLocaleString('ja-JP')} mm` : 'コン天まで');
+const depthText = (mm) => (mm === null || mm === undefined ? '未計測（全量で計算）' : mm ? `コン天から ${mm.toLocaleString('ja-JP')} mm` : 'コン天まで');
 function openHistory() {
   const list = $('historyList');
   list.replaceChildren();
@@ -589,10 +594,10 @@ function openHistory() {
     const what = [e.zone, e.action, e.spans.length > 3 ? `${e.spans.length} スパン` : e.spans.join('・')].filter(Boolean).join('　');
     const body = document.createElement('span');
     body.textContent = what;
-    if (e.depthMm !== undefined && e.depthMm !== null) {
+    if (e.depthMm !== undefined) { // null は未計測。高さに関係ない操作は undefined
       const dep = document.createElement('span');
       dep.className = 'depth';
-      dep.textContent = depthText(e.depthMm);
+      dep.textContent = `柱・梁：${depthText(e.depthMm)}`;
       body.append('　', dep);
     }
     li.append(time, body, rest);
@@ -643,7 +648,7 @@ $('bulk').addEventListener('click', () => {
 });
 bindNumber('depth', 'depth');
 $('depth').addEventListener('change', () => { // 入力を終えたときに1件だけ記録する（1文字ごとには残さない）
-  logEvent('打設済み高さ：数値で入力', depthTargets(), Math.max(0, Number($('depth').value) || 0));
+  logEvent('打設済み高さ：数値で入力', depthTargets(), readDepth());
   save();
 });
 bindNumber('truck', 'truck');

@@ -572,10 +572,14 @@ async function remainVolume(ids, depthMm) {
   return (await res.json()).units[0].total;
 }
 
+// 打設済み高さの欄（mm）。空欄は未計測で、少なく見積もらないよう柱・梁を全部残りに数える（全高さを打設済み高さにしたのと同じ）
+const fullDepth = () => Math.round((state.z1 - state.z0) * 1000);
+const remainDepthValue = () => ($('remainDepth').value.trim() === '' ? null : Math.max(0, Number($('remainDepth').value) || 0));
+
 // 打ち上がり高さの目安：残りのスパン（なければ全体）に掛かる、上端付近のスラブ下端・梁せい中央の中央値
 function presetDepth(kind) {
   const top = state.z1;
-  if (kind === 'none') return Math.round((top - state.z0) * 1000);
+  if (kind === 'none') return fullDepth();
   const rings = (state.remainCells.length ? state.remainCells.map(cellById) : spans).map((c) => c.ring);
   const cat = kind === 'slab' ? 'スラブ' : '梁';
   const ds = [];
@@ -608,14 +612,14 @@ function scheduleRemain() {
   remainTimer = setTimeout(runRemain, 150);
 }
 async function runRemain() {
-  const ids = [...state.remainCells], depth = Number($('remainDepth').value) || 0, seq = ++remainSeq;
+  const ids = [...state.remainCells], input = remainDepthValue(), depth = input ?? fullDepth(), seq = ++remainSeq;
   if (!ids.length) { $('remainResult').innerHTML = '<span class="muted">残りのスパンを選ぶと計算します</span>'; return; }
   $('remainResult').innerHTML = '<span class="muted">計算中…</span>';
   try {
     const v = await remainVolume(ids, depth);
     if (seq !== remainSeq) return;
     const t = truckPlan(v);
-    $('remainResult').innerHTML = `<div class="muted">残り ${ids.length} スパン・柱・梁は${depth ? `コン天から ${depth.toLocaleString('ja-JP')} mm 下` : 'コン天'}まで打設済み</div>` +
+    $('remainResult').innerHTML = `<div class="muted">残り ${ids.length} スパン・柱・梁は${input === null ? '未計測（全量で計算）' : `${input ? `コン天から ${input.toLocaleString('ja-JP')} mm 下` : 'コン天'}まで打設済み`}</div>` +
       `<div class="total">${fmt(v)} m³</div>` + (t.extra ? `<div class="muted">割増 ${t.extra}% 込み ${fmt(t.need)} m³</div>` : '') +
       `<div class="trucks">${t.extra ? '発注の目安：' : '発注の目安（割増なし）：'}${t.text}</div>`;
   } catch (e) {
@@ -627,15 +631,15 @@ async function runRemain() {
 async function exportRemainCsv() {
   const order = [...state.remainCells];
   if (!order.length) { toast('先に残りのスパンを選んでください', 'error'); return; }
-  const levels = [['未打設（全量）', presetDepth('none')], ['梁せい中央', presetDepth('beam')], ['スラブ下', presetDepth('slab')]]
+  const levels = [['未計測（全量）', presetDepth('none')], ['梁せい中央', presetDepth('beam')], ['スラブ下', presetDepth('slab')]]
     .filter(([, d]) => d !== null);
-  const cur = Number($('remainDepth').value) || 0;
+  const cur = remainDepthValue() ?? fullDepth();
   if (!levels.some(([, d]) => d === cur)) levels.push(['入力値', cur]);
   toast('残量の一覧表を計算しています…', 'info');
   const rows = order.map((_, k) => order.slice(k)); // 残り n, n-1, ..., 1 スパン
   const vols = await Promise.all(rows.flatMap((ids) => levels.map(([, d]) => remainVolume(ids, d))));
   const head = ['残りのスパン数', '残りのスパン（打設順）'];
-  for (const [name, d] of levels) head.push(`${name}：コン天から${d}mm（m3）`, `${name}：生コン車`);
+  for (const [name, d] of levels) head.push(`${name}${d === fullDepth() ? '' : `：コン天から${d}mm`}（m3）`, `${name}：生コン車`);
   const out = [head];
   rows.forEach((ids, r) => {
     const row = [ids.length, ids.map((id) => cellById(id).label).join(' → ')];
@@ -1905,6 +1909,7 @@ for (const id of ['remainDepth', 'truckM3', 'extraPct']) $(id).addEventListener(
 $('remainBody').addEventListener('click', (ev) => {
   const kind = ev.target.dataset.preset;
   if (!kind) return;
+  if (kind === 'none') { $('remainDepth').value = ''; scheduleRemain(); return; } // 未計測に戻す
   const d = presetDepth(kind);
   if (d === null) { toast(`選んだスパンに${kind === 'slab' ? 'スラブ' : '梁'}がありません。mm を直接入れてください`, 'error'); return; }
   $('remainDepth').value = d;

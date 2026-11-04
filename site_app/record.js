@@ -24,6 +24,8 @@ const cell = (v) => {
   const s = v === null || v === undefined ? '' : String(v);
   return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 };
+// 打設済み高さの欄：null は高さ未計測（全量で計算）、undefined は高さに関係ない操作
+const depthCell = (mm) => (mm === null ? '未計測' : mm ?? '');
 const m3 = (v) => (typeof v === 'number' ? v.toFixed(3) : '');
 
 // CSV（Excel で開けるよう BOM 付き UTF-8・CRLF）。記録は古い順、最終状態は全スパン
@@ -36,7 +38,7 @@ export function recordCsv(data, work, { statusOf, depthOf, now = new Date().toIS
     ['履歴（古い順）'],
     ['時刻', '工区', '操作', 'スパン', '打設済み高さ（コン天からmm）', '残り（m3）'],
     ...(work.log ?? []).map((e) => [stamp(e.at), e.zone ?? '', e.action, (e.spans ?? []).join('・'),
-      e.depthMm ?? '', m3(e.remaining)]),
+      depthCell(e.depthMm), m3(e.remaining)]),
     [],
     ['スパンごとの最終状態'],
     ['工区', 'スパン', '状態', '打設済み高さ（コン天からmm）', '残り（m3）', '全量（m3）'],
@@ -46,7 +48,7 @@ export function recordCsv(data, work, { statusOf, depthOf, now = new Date().toIS
     if (full < EMPTY) continue;
     const s = statusOf(c.id);
     rows.push([zoneTitle(data, zoneKeyOf(c)), c.label, STATUS_NAME[s],
-      s === 'pouring' ? depthOf(c.id) : '', m3(remaining(c, s, depthOf(c.id), data)), m3(full)]);
+      s === 'pouring' ? depthCell(depthOf(c.id)) : '', m3(remaining(c, s, depthOf(c.id), data)), m3(full)]);
   }
   return '﻿' + rows.map((r) => r.map(cell).join(',')).join('\r\n') + '\r\n';
 }

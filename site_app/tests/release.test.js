@@ -22,3 +22,11 @@ test('オフライン用に保存するファイルがすべて存在する', ()
   const shell = [...read('sw.js').match(/SHELL = \[([^\]]+)\]/)[1].matchAll(/'\.\/([^']*)'/g)].map((m) => m[1]).filter(Boolean);
   for (const p of shell) assert.doesNotThrow(() => readFileSync(new URL(`../${p}`, import.meta.url)), `${p} が無い`);
 });
+
+test('画面のスクリプトに書き間違い（構文の誤り）がない（app.js はテストから読み込まないため、ここで確かめる）', async () => {
+  const { execFileSync } = await import('node:child_process');
+  const { fileURLToPath } = await import('node:url');
+  for (const f of ['app.js', 'calc.js', 'record.js', 'sw.js']) {
+    execFileSync(process.execPath, ['--check', fileURLToPath(new URL(`../${f}`, import.meta.url))]); // 誤りがあれば例外
+  }
+});
