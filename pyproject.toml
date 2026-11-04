@@ -14,7 +14,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest"]
+dev = ["pytest", "playwright"]  # playwright：ui-review・site-export-check スキルが画面を自動で動かす（PCのEdgeを使う）
 
 [tool.pytest.ini_options]
 pythonpath = ["backend"]
