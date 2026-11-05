@@ -323,30 +323,100 @@ function boundaryText(b) {
 
 // ---------- 境界線・工区の描画 ----------
 // 点列の両端の区間を、モデルの外まで延ばして描く（計算側の延長と同じ考え方）
-function extendedLine(points, color, dashed = false) {
+// 境界線の両端をモデルの外まで延ばした点列（計算側の延長と同じ考え方。画面に描く用）
+function extendedPoints(points) {
   const [b0, b1, b2, b3] = state.meta.bounds;
   const reach = Math.hypot(b2 - b0, b3 - b1);
   const out = (from, to) => {
-    const d = new THREE.Vector2(to[0] - from[0], to[1] - from[1]).normalize().multiplyScalar(reach);
-    return new THREE.Vector3(to[0] + d.x, to[1] + d.y, 0);
+    const dx = to[0] - from[0], dy = to[1] - from[1], len = Math.hypot(dx, dy) || 1;
+    return [to[0] + dx / len * reach, to[1] + dy / len * reach];
   };
   const n = points.length;
-  const pts = [out(points[1], points[0]), ...points.slice(1, -1).map(([x, y]) => new THREE.Vector3(x, y, 0)),
-    out(points[n - 2], points[n - 1])];
+  return [out(points[1], points[0]), ...points.slice(1, -1), out(points[n - 2], points[n - 1])];
+}
+
+function extendedLine(points, color, dashed = false) {
+  return polyLine(extendedPoints(points), color, dashed);
+}
+
+function polyLine(pts, color, dashed = false, opacity = 1, dash = [0.8, 0.4]) {
   const mat = dashed
-    ? new THREE.LineDashedMaterial({ color, dashSize: 0.8, gapSize: 0.4, depthTest: false })
+    ? new THREE.LineDashedMaterial({ color, dashSize: dash[0], gapSize: dash[1], depthTest: false, transparent: opacity < 1, opacity })
     : new THREE.LineBasicMaterial({ color, depthTest: false });
-  const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), mat);
+  const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts.map(([x, y]) => new THREE.Vector3(x, y, 0))), mat);
   if (dashed) line.computeLineDistances();
   line.renderOrder = 9;
   return line;
 }
 
+// 線分どうしの交点の位置（線分 p→q 上の割合 t）。交わらなければ null
+function segmentCrossT([px, py], [qx, qy], [ax, ay], [bx, by]) {
+  const rx = qx - px, ry = qy - py, sx = bx - ax, sy = by - ay, d = rx * sy - ry * sx;
+  if (Math.abs(d) < 1e-12) return null;
+  const t = ((ax - px) * sy - (ay - py) * sx) / d, u = ((ax - px) * ry - (ay - py) * rx) / d;
+  return t > 1e-9 && t < 1 - 1e-9 && u >= -1e-9 && u <= 1 + 1e-9 ? t : null;
+}
+
+// 境界線を、ほかの線との交点で区切り、両側が同じ工区名の区間を見分ける（JWCADの伸縮の代わり）。
+// 両端は必ずモデルの外まで延びる決まり（D14）なので、余分に延びた線は両側に同じ工区名を付けて1つにまとめる。
+// その区間は数量の境目ではないので、薄い点線で描く。計算（工区の範囲・数量）は変えない
+function boundaryPieces() {
+  const lines = state.boundaries.map((b) => extendedPoints(b.points));
+  // 工区の範囲が今の境界線で計算したものでなければ（計算待ち・入力中）、見分けずにすべて実線
+  const fresh = !state.pending && state.result?.request?.boundaries &&
+    JSON.stringify(state.result.request.boundaries) === JSON.stringify(state.boundaries.map((b) => b.points));
+  const labelOf = new Map();
+  if (fresh) for (const sd of state.seeds) { const r = regionOf(sd.x, sd.y); if (r >= 0 && !labelOf.has(r)) labelOf.set(r, sd.label); }
+  const eps = 0.05; // m。線の両側を調べる離れ
+  return lines.map((pts, i) => {
+    const spans = []; // 交点で区切った小区間 {from, to, merged}
+    for (let k = 0; k + 1 < pts.length; k++) {
+      const p = pts[k], q = pts[k + 1];
+      const ts = [0, 1];
+      lines.forEach((other, j) => {
+        for (let m = 0; m + 1 < other.length; m++) {
+          if (j === i && Math.abs(m - k) <= 1) continue; // 自分の隣り合う区間とはつながっているだけ
+          const t = segmentCrossT(p, q, other[m], other[m + 1]);
+          if (t !== null) ts.push(t);
+        }
+      });
+      ts.sort((a, b) => a - b);
+      const len = Math.hypot(q[0] - p[0], q[1] - p[1]) || 1, nx = -(q[1] - p[1]) / len, ny = (q[0] - p[0]) / len;
+      const at = (t) => [p[0] + (q[0] - p[0]) * t, p[1] + (q[1] - p[1]) * t];
+      for (let n = 0; n + 1 < ts.length; n++) {
+        if (ts[n + 1] - ts[n] < 1e-9) continue;
+        spans.push({ from: at(ts[n]), to: at(ts[n + 1]), merged: fresh ? sideMerged(ts[n], ts[n + 1]) : false });
+      }
+      // 交点の間を細かく見て、両側とも工区の中にある点で判定する（延ばした先はモデルの外で、工区が無い）
+      function sideMerged(t0, t1) {
+        const steps = Math.max(1, Math.ceil(len * (t1 - t0) / 0.5));
+        for (let s = 0; s < steps; s++) {
+          const [mx, my] = at(t0 + (t1 - t0) * (s + 0.5) / steps);
+          const ra = regionOf(mx + nx * eps, my + ny * eps), rb = regionOf(mx - nx * eps, my - ny * eps);
+          if (ra >= 0 && rb >= 0) { const a = labelOf.get(ra); return a !== undefined && a === labelOf.get(rb); }
+        }
+        return null; // モデルの外だけを通る区間：となりの区間に合わせる
+      }
+    }
+    // モデルの外だけの区間は、となりの区間と同じ描き方にする（線の途中で実線・点線が切り替わらないように）
+    for (let k = 1; k < spans.length; k++) if (spans[k].merged === null) spans[k].merged = spans[k - 1].merged;
+    for (let k = spans.length - 2; k >= 0; k--) if (spans[k].merged === null) spans[k].merged = spans[k + 1].merged;
+    const pieces = [];
+    for (const sp of spans) {
+      const merged = Boolean(sp.merged), last = pieces.at(-1);
+      if (last && last.merged === merged) last.pts.push(sp.to);
+      else pieces.push({ pts: [sp.from, sp.to], merged });
+    }
+    return pieces;
+  });
+}
+
 function drawLines() {
   lineGroup.clear();
+  const pieces = boundaryPieces();
   state.boundaries.forEach((b, i) => {
     if (state.pending?.editIndex === i) return;
-    lineGroup.add(extendedLine(b.points, 0xd50000));
+    for (const pc of pieces[i]) lineGroup.add(pc.merged ? polyLine(pc.pts, 0xe57373, true, 1, [0.5, 0.5]) : polyLine(pc.pts, 0xd50000));
   });
   const legs = state.pending ? pendingLegs() : [];
   const preview = legs.length && legsPolyline(legs);
@@ -1324,6 +1394,7 @@ async function runCompute() {
   state.hiddenKeys = new Set(state.result.hidden_keys);
   paint();
   drawZones();
+  drawLines(); // 同じ工区名どうしの間の線を薄くする
   renderResults();
   if (state.mode === 'remain') scheduleRemain(); // 高さ範囲・部材種別・材料の変更を残量にも反映
   updateSpans().catch((e) => toast(`スパンを工区で分けられません：${e.message}`, 'error'));
