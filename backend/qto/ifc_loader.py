@@ -5,6 +5,7 @@ IFCファイルは読み取りのみ。結果はキャッシュファイルに�
 """
 from __future__ import annotations
 
+import hashlib
 import multiprocessing
 import pickle
 import time
@@ -34,6 +35,9 @@ CATEGORY_BY_CLASS = {
     "IfcStairFlight": "階段",
 }
 CACHE_VERSION = 2  # 2: コンクリート以外の材料の形状も取り出す（数える材料を画面で選べるように）
+# このファイルの中身の指紋。読み込みの判定（材料・種別など）を変えたら、古いキャッシュを使わず読み直す。
+# 版を上げ忘れても、古い判定のままの数量が出ない（基準値の確認もすり抜けない）ようにするため
+LOADER_FINGERPRINT = hashlib.sha1(Path(__file__).read_bytes()).hexdigest()[:8]
 
 
 def is_concrete(material_name: str | None) -> bool:
@@ -216,7 +220,7 @@ def _extract(path: Path) -> Model:
 
 def _cache_path(path: Path, cache_dir: Path) -> Path:
     st = path.stat()
-    return cache_dir / f"{path.stem}-{st.st_size}-{int(st.st_mtime)}-v{CACHE_VERSION}.pkl"
+    return cache_dir / f"{path.stem}-{st.st_size}-{int(st.st_mtime)}-v{CACHE_VERSION}-{LOADER_FINGERPRINT}.pkl"
 
 
 def load_model(path: str | Path, cache_dir: str | Path | None = None) -> Model:

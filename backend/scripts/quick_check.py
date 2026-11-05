@@ -2,8 +2,9 @@
 
 使い方: .venv\\Scripts\\python.exe backend\\scripts\\quick_check.py
 hackathon_model.ifc を前処理キャッシュから読み、全体と 5SL～6SL の総数量を基準値と比べる。
-キャッシュが無いときは読み込みに数分かかるため、検証を省略して終了コード 0 で終える。
-終了コード：0＝一致（または省略）、1＝基準値とずれた
+キャッシュが無いとき（キャッシュの版を上げた直後など）も省略せず、IFCから読み込んで確かめる（約5秒）。
+省略するのは hackathon_model.ifc そのものが無いときだけ（IFCを含まない複製など）。
+終了コード：0＝一致（またはIFCが無く省略）、1＝基準値とずれた
 """
 import sys
 import time
@@ -25,9 +26,11 @@ EXPECTED = {"全体": 4381.88, "5SL～6SL": 372.90}
 
 
 def main() -> int:
-    if not IFC.exists() or not _cache_path(IFC, ROOT / ".qto_cache").exists():
-        print("キャッシュなしのため実モデルの検証は省略（start.bat で一度IFCを読み込むと作られる）")
+    if not IFC.exists():
+        print("hackathon_model.ifc が無いため実モデルの検証は省略")
         return 0
+    # キャッシュが無くても省略しない：キャッシュの版を上げる変更（読み込みの判定を変えたとき）こそ確かめる必要がある
+    cached = _cache_path(IFC, ROOT / ".qto_cache").exists()
     t0 = time.perf_counter()
     model = load_model(IFC)
     mats = model.default_materials  # 画面・APIと同じく、材料を選ばないときはコンクリートだけ（D20）
@@ -45,7 +48,8 @@ def main() -> int:
         print("数量が基準値とずれています：" + "／".join(bad), file=sys.stderr)
         print(f"（実測：{summary}）", file=sys.stderr)
         return 1
-    print(f"基準値と一致（±{TOLERANCE} m³）：{summary}　{time.perf_counter() - t0:.1f}秒")
+    how = "" if cached else "（キャッシュが無いためIFCから読み込み）"
+    print(f"基準値と一致（±{TOLERANCE} m³）：{summary}　{time.perf_counter() - t0:.1f}秒{how}")
     return 0
 
 
