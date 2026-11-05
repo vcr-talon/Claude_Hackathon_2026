@@ -113,6 +113,20 @@
     <div id="hint" class="hint"></div>
     <div id="toast" class="toast hidden" role="status" title="クリックで閉じる"></div>
     <div id="tip" class="tip hidden"></div>
+    <div id="handoff" class="handoff hidden" role="dialog" aria-labelledby="handoffTitle">
+      <div class="handoffhead"><h3 id="handoffTitle">タブレットに渡す</h3><button id="handoffClose" title="閉じる（Esc）">閉じる</button></div>
+      <div class="handoffbody">
+        <figure class="qr"><img src="site_app_qr.svg" alt="残量チェックの公開URLのQRコード" width="180" height="180">
+          <figcaption>タブレットのカメラで読むと<br>残量チェックが開きます</figcaption></figure>
+        <ol>
+          <li>書き出したファイルを、メールやクラウドでタブレットに送ります<div id="handoffFile" class="filename"></div><div class="muted">保存先：ダウンロードのフォルダ</div></li>
+          <li>タブレットのカメラで左のQRコードを読み、残量チェックを開きます</li>
+          <li>「データを開く」を押し、ファイルの画面で「最近使った項目」から選びます<div class="muted">メールの添付は、長押しして「"ファイル"に保存」を選ぶと見つけやすくなります</div></li>
+          <li>2回目からは「前回のデータで続ける」で開けます（ファイルを探し直す必要はありません）</li>
+        </ol>
+      </div>
+      <div class="muted small">QRコードに入っているのはアプリの公開URLだけです。数量のデータは入っていません</div>
+    </div>
     <div id="loading" class="loading">IFCを読み込んでいます…</div>
   </main>
 

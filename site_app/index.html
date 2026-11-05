@@ -17,8 +17,21 @@
   <section id="start" class="start">
     <h1>残量チェック</h1>
     <p class="lead">打設当日に、残りのコンクリート数量と生コン車の台数を確かめるアプリです</p>
-    <label class="bigbtn">データを開く<input type="file" id="fileInput" accept=".json,application/json"></label>
+    <div id="resumeWrap" class="resume hidden">
+      <button id="resume" class="bigbtn">前回のデータで続ける</button>
+      <div id="resumeInfo" class="resumeinfo"></div>
+    </div>
+    <label class="bigbtn"><span id="openLabel">データを開く</span><input type="file" id="fileInput" accept=".json,application/json"></label>
     <p class="note">PCアプリの「タブレット用に書き出す」で作ったファイルを選んでください</p>
+    <div class="findhelp">
+      <b>ファイルが見つからないとき</b>
+      <ul>
+        <li>ファイルの画面の下にある「最近使った項目」を開くと、新しいファイルが上に出ます</li>
+        <li>メールの添付は、長押しして「"ファイル"に保存」を選んでおくと見つけやすくなります</li>
+        <li>名前は「5SL～6SL_A・B工区_現場用_1105_1430.json」のように、高さ範囲と工区から始まります</li>
+        <li>一度開いたデータはこの端末に残り、次からは「前回のデータで続ける」で開けます</li>
+      </ul>
+    </div>
     <div id="lastWork" class="lastwork hidden"></div>
     <p id="startError" class="error hidden"></p>
     <p class="note"><button class="btn small" data-open-settings>設定・エラーの記録</button></p>
@@ -118,7 +131,7 @@
       </div>
       <h3>保存した作業</h3>
       <div class="row">
-        <button id="clearWork" class="btn small">この端末に保存した作業をすべて消す（打設の記録も消えます）</button>
+        <button id="clearWork" class="btn small">この端末に保存した作業をすべて消す（開いたデータと打設の記録も消えます）</button>
       </div>
       <button id="settingsClose" class="btn">閉じる</button>
     </div>

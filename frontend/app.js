@@ -688,11 +688,25 @@ async function exportSite() {
   const sum = data.cells.reduce((a, c) => a + c.from_top.at(-1) + c.slab, 0);
   data.overlap_note = data.total - sum; // 全スパンを合わせてから差を記録
   data.uncomputed = [...new Map(data.uncomputed.map((u) => [`${u.name}|${u.category}|${u.reason}`, u])).values()];
-  const name = `${state.meta.source.replace(/\.ifc$/i, '')}_${base.title.replace(/[\s（）()]/g, '')}_現場用_${stamp()}.json`;
+  const name = siteFileName(range, zones.length ? zonesText(zones.map((z) => z.key).sort()) : '');
   download(name, new Blob([JSON.stringify(data)], { type: 'application/json' }));
-  toast(`タブレット用に、スパン ${data.cells.length} 件・合計 ${fmt(sum)} m³ を書き出しました${missing ? `（未計算 ${missing} 件は含まれません）` : ''}。` +
-    `${SAVED_TO}。メールやクラウドでタブレットに送り、残量チェックの「データを開く」で選びます`, 'ok');
+  toast(`タブレット用に、スパン ${data.cells.length} 件・合計 ${fmt(sum)} m³ を書き出しました${missing ? `（未計算 ${missing} 件は含まれません）` : ''}`, 'ok');
+  showHandoff(name);
 }
+
+// タブレット用のファイル名：iPadの一覧で省略されても見分けられるよう、高さ範囲・工区を先頭に、日時は短く。
+// 「_現場用_」は誤コミットを止める決まり（.claude/hooks/guard_data.py）の目印なので残す。IFC名はファイルの中（source）にある
+function siteFileName(range, zoneText) {
+  const parts = [range, zoneText].filter(Boolean).map((t) => t.replace(/[\s（）()\\/:*?"<>|]/g, ''));
+  return `${parts.join('_')}_現場用_${stamp().slice(4)}.json`;
+}
+
+// 書き出したあとの「タブレットに渡す」案内（アプリの公開URLのQRコードと手順）
+function showHandoff(name) {
+  $('handoffFile').textContent = name;
+  $('handoff').classList.remove('hidden');
+}
+const hideHandoff = () => $('handoff').classList.add('hidden');
 
 const regionHoverGroup = new THREE.Group();
 overlay.add(regionHoverGroup);
@@ -1832,7 +1846,7 @@ $('pendingTurn').addEventListener('click', turnPending);
 $('pendingBack').addEventListener('click', backPending);
 $('pendingOff').addEventListener('input', drawLines);
 $('pendingOff').addEventListener('keydown', (ev) => { if (ev.key === 'Enter') confirmPending(); });
-window.addEventListener('keydown', (ev) => { if (ev.key === 'Escape') { cancelPending(); if (state.mode !== 'view') setMode(state.mode); } });
+window.addEventListener('keydown', (ev) => { if (ev.key === 'Escape') { hideHandoff(); cancelPending(); if (state.mode !== 'view') setMode(state.mode); } });
 window.addEventListener('keydown', (ev) => {
   if (!(ev.ctrlKey || ev.metaKey) || !state.meta) return;
   // 文字や数値の入力中はブラウザ標準の取り消しに任せる
@@ -1934,6 +1948,7 @@ $('remainBody').addEventListener('click', (ev) => {
   $('remainDepth').value = d;
   scheduleRemain();
 });
+$('handoffClose').addEventListener('click', hideHandoff);
 $('exportSite').addEventListener('click', () => exportSite().catch((e) => toast(`タブレット用に書き出せません：${e.message}`, 'error')));
 $('remainCsv').addEventListener('click', () => exportRemainCsv().catch((e) => toast(`残量の一覧表を書き出せませんでした（詳細：${e.message}）`, 'error')));
 $('exportCsv').addEventListener('click', () => exportCsv().catch((e) => toast(`表を書き出せません：${e.message}`, 'error')));

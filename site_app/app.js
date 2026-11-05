@@ -1,8 +1,9 @@
 // 現場残量アプリの画面。数量の計算は calc.js（PCアプリで作った表を引いて足すだけ）
 import { fmt, fullVolume, parseSiteData, presetMm, totals, remaining, truckPlan } from './calc.js';
 import { STATUS_NAME, recordCsv, stamp, zoneKeyOf, zoneTitle } from './record.js';
+import { clearData, loadData, saveData } from './datastore.js';
 
-const APP_VERSION = '1.4.4'; // sw.js の VERSION と合わせる（キャッシュで古い版が動いていないか確かめる用）
+const APP_VERSION = '1.5.0'; // sw.js の VERSION と合わせる（キャッシュで古い版が動いていないか確かめる用）
 const $ = (id) => document.getElementById(id);
 const SVGNS = 'http://www.w3.org/2000/svg';
 const CAT_COLORS = { 柱: '#c62828', 梁: '#ef6c00', 壁: '#0288d1', スラブ: '#a0a4a8', 基礎: '#6d4c41', 階段: '#6a1b9a', その他: '#546e7a' };
@@ -11,7 +12,7 @@ const EMPTY = 0.0005; // m³。これ未満のスパン（建物の外の帯な�
 const THIN_SPAN = 2.0; // m。短い辺がこれ未満のスパンは数字を出さない（ふつうのスパンは3〜8m。通り芯が近い間や端の帯）
 const TAP_SLOP = 10; // px。指を離したときの移動がこれ未満ならタップ
 const LONG_PRESS_MS = 550; // これだけ押し続けると長押し（そのスパンだけの打ち上がりを入れる）
-const STORE = 'site.work.'; // localStorage：スパンの状態と履歴（データファイル本体は保存しない）
+const STORE = 'site.work.'; // localStorage：スパンの状態と履歴（データファイル本体は datastore.js で IndexedDB に残す）
 const LAST = 'site.last';
 const UNDO_MAX = 200;
 
@@ -84,24 +85,54 @@ function toast(msg, kind = '') {
 }
 
 // ---------- データを開く ----------
-function showStart() {
+async function showStart() {
   $('work').classList.add('hidden');
   $('start').classList.remove('hidden');
   const last = load(LAST);
-  $('lastWork').classList.toggle('hidden', !last);
-  if (last) {
+  let kept = null;
+  try { kept = await loadData(); } catch (e) { logError(`データの読み出し: ${e.message}`); }
+  $('resumeWrap').classList.toggle('hidden', !kept);
+  $('openLabel').textContent = kept ? '別のデータを開く' : 'データを開く';
+  $('fileInput').parentElement.classList.toggle('secondary', Boolean(kept));
+  if (kept) {
+    const when = last?.title === kept.title && last.updated ? `${new Date(last.updated).toLocaleString('ja-JP')} 更新` : 'まだ入力なし';
+    $('resumeInfo').textContent = `${kept.title}（${when}）`;
+  }
+  // データを残す前の版で作業していたときだけ、従来の案内を出す
+  $('lastWork').classList.toggle('hidden', !last || Boolean(kept));
+  if (last && !kept) {
     $('lastWork').textContent = `前回の作業：${last.title}（${new Date(last.updated).toLocaleString('ja-JP')} 更新）。` +
       '同じデータファイルを開くと、続きから再開します';
   }
 }
 
+function showStartError(e) {
+  $('startError').textContent = e.message;
+  $('startError').classList.remove('hidden');
+}
+
 async function openFile(file) {
   $('startError').classList.add('hidden');
+  let text, d;
   try {
-    start(parseSiteData(await file.text()));
+    text = await file.text();
+    d = parseSiteData(text);
   } catch (e) {
-    $('startError').textContent = e.message;
-    $('startError').classList.remove('hidden');
+    return showStartError(e);
+  }
+  // 次からファイルを探さずに開けるよう、端末の中に残す（残せなくても作業は続ける）
+  saveData(text, { title: d.title, exported_at: d.exported_at }).catch((e) => logError(`データの保存: ${e.message}`));
+  start(d);
+}
+
+async function resume() {
+  $('startError').classList.add('hidden');
+  try {
+    const kept = await loadData();
+    if (!kept) throw new Error('前回のデータが見つかりません。「データを開く」で選んでください');
+    start(parseSiteData(kept.text));
+  } catch (e) {
+    showStartError(e);
   }
 }
 
@@ -579,11 +610,12 @@ async function copyErrors() {
     toast('選択した文字を長押ししてコピーしてください');
   }
 }
-function clearWork() {
-  if (!confirm('この端末に保存した作業（スパンの状態・入力値・打設の記録）をすべて消します。よろしいですか？')) return;
+async function clearWork() {
+  if (!confirm('この端末に保存した作業（開いたデータ・スパンの状態・入力値・打設の記録）をすべて消します。よろしいですか？')) return;
   try {
     Object.keys(localStorage).filter((k) => k.startsWith(STORE) || k === LAST).forEach((k) => localStorage.removeItem(k));
   } catch { /* 保存できない環境 */ }
+  try { await clearData(); } catch (e) { logError(`データの削除: ${e.message}`); }
   $('settings').classList.add('hidden');
   toast('保存した作業を消しました');
   showStart();
@@ -680,6 +712,7 @@ $('ownReset').addEventListener('click', () => endOwnDepth(true));
 $('ownClose').addEventListener('click', () => endOwnDepth(false));
 svg.addEventListener('contextmenu', (e) => e.preventDefault()); // 長押しでブラウザのメニューを出さない
 $('openOther').addEventListener('click', showStart);
+$('resume').addEventListener('click', resume);
 $('showMissing').addEventListener('click', showMissing);
 $('missingClose').addEventListener('click', () => $('missing').classList.add('hidden'));
 document.querySelectorAll('[data-open-settings]').forEach((b) => b.addEventListener('click', openSettings));
