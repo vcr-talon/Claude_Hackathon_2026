@@ -3,7 +3,7 @@ import pytest
 from shapely.geometry import Polygon
 
 from qto.geometry import compute
-from qto.site_export import depth_steps, export_cell, split_cells, touches
+from qto.site_export import con_top, depth_steps, export_cell, split_cells, touches
 from qto.units import PourUnit, Unit, compute_units
 from test_geometry import box_solid
 
@@ -67,6 +67,24 @@ def test_presets_use_members_touching_the_span():
     assert a.slab_bottom_mm == 200 and b.slab_bottom_mm == 200
     assert b.beam_mid_mm == 250  # 梁せい0.5の中央
     assert a.beam_mid_mm == 250  # 梁（x 0.5〜2）は a にも掛かる
+
+
+def test_con_top_is_highest_storey_in_range():
+    # 範囲の上端がSLより上（6SL+600 など）なら、範囲の中で一番上のSLがコン天
+    assert con_top(0, 1.6, [-1, 0, 1, 2]) == 1
+    assert con_top(0, 1, [0, 1, 2]) == 1  # 上端ちょうどのSL
+    assert con_top(0.2, 0.9, [0, 1]) == 0.9  # 範囲の中にSLがなければ上端
+    assert con_top(0, 1.6, [0]) == 1.6  # 下端のSLはコン天にしない
+
+
+def test_presets_measured_from_con_top_when_range_goes_above_sl():
+    # 範囲の上端が SL（z=1）より 600 上。目安はSLから測り、書き出しには上端からの距離（＋600）で入れる
+    a, b = [export_cell(SOLIDS, cid, cid, ring, 0, 1.6, CATS, None, 0.05, top=1.0) for cid, ring in CELLS]
+    assert a.slab_bottom_mm == 800 and b.slab_bottom_mm == 800
+    assert b.beam_mid_mm == 850
+    # コン天を渡さないと、上端付近に部材がなく目安が出ない（直す前の動き）
+    old = export_cell(SOLIDS, "a", "a", CELLS[0][1], 0, 1.6, CATS, None, 0.05)
+    assert old.slab_bottom_mm is None and old.beam_mid_mm is None
 
 
 def test_touches_ignores_members_only_sharing_an_edge():

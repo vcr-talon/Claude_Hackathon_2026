@@ -2,7 +2,7 @@
 // データは架空の数値（BIMデータは含めない）
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { fullVolume, interp, parseSiteData, presetMm, remaining, totals, truckPlan } from '../calc.js';
+import { aboveMm, conTop, excludedAbove, fullVolume, interp, parseSiteData, presetMm, remaining, totals, truckPlan } from '../calc.js';
 
 const near = (a, b, tol = 1e-9) => assert.ok(Math.abs(a - b) <= tol, `${a} と ${b} の差が ${tol} を超える`);
 
@@ -91,4 +91,36 @@ test('打設中でも高さが未計測（null）なら、柱・梁を全部残�
   near(totals(DATA, () => 'pouring', () => null).remaining, sum('todo').remaining);
   // 0 mm（コン天まで打設済み）はスラブだけが残る。未計測とは違う
   near(remaining(DATA.cells[0], 'pouring', 0, DATA), 1.5);
+});
+
+// 範囲の上端がSLより上（例：6SL+600）のデータ。ここでは SL が上端の 70 mm 下にある
+const ABOVE = { ...DATA, storeys: [{ name: '5SL', elevation: 10.0 }, { name: '6SL', elevation: 10.05 }] };
+
+test('コン天は範囲の中の一番上のSL。書き出しの con_top があればそれを使う', () => {
+  near(conTop(ABOVE), 10.05);
+  assert.equal(aboveMm(ABOVE), 70);
+  assert.equal(conTop(DATA), DATA.z1); // 階の情報がなければ範囲の上端
+  assert.equal(aboveMm({ ...ABOVE, con_top: 10.12 }), 0);
+  assert.equal(conTop({ ...DATA, storeys: [{ name: '5SL', elevation: 10.0 }] }), DATA.z1); // 下端のSLは使わない
+});
+
+test('上端がSLより上なら、打設済み高さはSLから測り、SLより上は残りに含めない', () => {
+  const a = ABOVE.cells[0]; // from_top [0, 1.0, 1.6, 2.0]、SL は上端から 70 mm → SLより上は 1.24
+  near(excludedAbove(a, 'pouring', 0, ABOVE), 1.24);
+  near(remaining(a, 'pouring', 0, ABOVE), 1.5); // コン天（SL）まで打設済み：スラブだけ
+  near(remaining(a, 'pouring', 30, ABOVE), 1.6 - 1.24 + 1.5); // SLから30mm下まで
+  // 未計測・未打設は全量（SLより上も含む）。打設済みは0
+  near(remaining(a, 'pouring', null, ABOVE), fullVolume(a));
+  near(remaining(a, 'todo', 30, ABOVE), fullVolume(a));
+  assert.equal(excludedAbove(a, 'pouring', null, ABOVE), 0);
+  const t = totals(ABOVE, () => 'pouring', () => 0);
+  near(t.excluded, 1.24 + interp(ABOVE.cells[1].from_top, 0.05, 0.12, 70));
+  near(t.done + t.remaining, t.planned); // 含めなかった分は打設済みに入る
+});
+
+test('目安ボタンの値はコン天からの距離に直す。SLより上の部材の値は使わない', () => {
+  assert.equal(presetMm(ABOVE.cells, 'slab_bottom_mm', ABOVE), 130); // [180, 200] − 70 の上側
+  assert.equal(presetMm(ABOVE.cells, 'beam_mid_mm', ABOVE), 230);
+  assert.equal(presetMm([{ beam_mid_mm: 50 }], 'beam_mid_mm', ABOVE), null);
+  assert.equal(presetMm(DATA.cells, 'slab_bottom_mm', DATA), 200); // 上端がSLなら今までどおり
 });

@@ -63,21 +63,36 @@ def touches(ring: Polygon, xmin: float, ymin: float, xmax: float, ymax: float) -
     return ring.intersects(box(x0, y0, x1, y1))
 
 
+def con_top(z0: float, z1: float, elevations: list[float]) -> float:
+    """コン天：高さ範囲の中で一番上のSL（範囲の上端がSLより上でも、打設済み高さはこのSLから測る）。
+
+    範囲の中にSLがなければ範囲の上端。下端ちょうどのSLは使わない（範囲の床でコン天にはならない）。
+    """
+    inside = [e for e in elevations if z0 + 1e-6 < e <= z1 + 1e-6]
+    return min(max(inside), z1) if inside else z1
+
+
 def _preset_mm(solids: list[Solid], ring: Polygon, z1: float, category: str, materials: set[str] | None,
-               kind: str) -> float | None:
-    """PCアプリの presetDepth と同じ：スパンに掛かり上端付近にある部材の中央値を10mm単位で。"""
+               kind: str, top: float | None = None) -> float | None:
+    """PCアプリの presetDepth と同じ：スパンに掛かりコン天 top 付近にある部材の中央値を10mm単位で。
+
+    値は書き出しの決まりどおり「範囲の上端 z1 から」の距離（＝コン天からの距離＋コン天から上端までの距離）。
+    top を省くと z1（範囲の上端がSLのときと同じ）。
+    """
+    top = z1 if top is None else top
     ds = []
     for s in solids:
         if s.category != category or (materials is not None and s.material not in materials):
             continue
         xmin, ymin, zmin, xmax, ymax, zmax = s.bbox
-        if abs(zmax - z1) > PRESET_NEAR_TOP or not touches(ring, xmin, ymin, xmax, ymax):
+        if abs(zmax - top) > PRESET_NEAR_TOP or not touches(ring, xmin, ymin, xmax, ymax):
             continue
-        ds.append(z1 - zmin if kind == "slab" else z1 - (zmin + zmax) / 2)
+        ds.append(top - zmin if kind == "slab" else top - (zmin + zmax) / 2)
     if not ds:
         return None
     ds.sort()
-    return round(ds[len(ds) // 2] * 100) * 10  # 上側の中央値（画面側と同じ取り方）
+    # 上側の中央値（画面側と同じ取り方）
+    return round(ds[len(ds) // 2] * 100) * 10 + round((z1 - top) * 1000)
 
 
 def split_cells(cells: list[tuple[str, str, list]], zones: list[tuple[str, str, list]] | None
@@ -105,7 +120,9 @@ def split_cells(cells: list[tuple[str, str, list]], zones: list[tuple[str, str, 
 
 
 def export_cell(solids: list[Solid], cell_id: str, label: str, ring: list[list[float]], z0: float, z1: float,
-                categories: set[str], materials: set[str] | None, step: float) -> SiteCell:
+                categories: set[str], materials: set[str] | None, step: float,
+                top: float | None = None) -> SiteCell:
+    """top：コン天（con_top の値）。打設済み高さの目安はここから測る。省くと範囲の上端"""
     region = Polygon(ring).buffer(0)
     vertical = categories - {SLAB}
     rv = compute(solids, z0, z1, region=region, categories=vertical, materials=materials) if vertical else None
@@ -122,6 +139,6 @@ def export_cell(solids: list[Solid], cell_id: str, label: str, ring: list[list[f
     members = {m.member_id for r in results for m in r.members if m.volume > EPS_VOLUME}
     uncomputed = [x for r in results for x in r.uncomputed]
     return SiteCell(cell_id, label, ring, from_top, s.volume() if s is not None else 0.0,
-                    _preset_mm(solids, region, z1, SLAB, materials, "slab"),
-                    _preset_mm(solids, region, z1, "梁", materials, "beam"),
+                    _preset_mm(solids, region, z1, SLAB, materials, "slab", top),
+                    _preset_mm(solids, region, z1, "梁", materials, "beam", top),
                     len(members), uncomputed)

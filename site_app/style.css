@@ -71,6 +71,8 @@ input[type=number] { font: inherit; font-size: 20px; width: 110px; min-height: 4
 .rest { font-size: 38px; font-weight: bold; font-variant-numeric: tabular-nums; color: #ffcc80; }
 .trucks { font-size: 18px; font-weight: bold; color: #ffe0b2; margin-top: 2px; }
 .restinfo { font-size: 15px; opacity: .85; }
+/* 範囲の上端がSLより上のとき、残りに含めていない量の注意（濃い上段の上で読める黄色） */
+.abovenote { font-size: 15px; font-weight: bold; color: #fff59d; margin-top: 2px; }
 
 .planwrap { grid-area: plan; position: relative; min-height: 0; background: #fafbfc; }
 .plan { width: 100%; height: 100%; display: block; touch-action: none; user-select: none; -webkit-user-select: none; }

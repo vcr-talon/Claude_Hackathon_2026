@@ -27,7 +27,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from qto.geometry import CATEGORY_ORDER, Result, compute  # noqa: E402
 from qto.ifc_loader import Model, load_model  # noqa: E402
 from qto.partition import ZoneSeed, assign_zones, split_regions  # noqa: E402
-from qto.site_export import export_cell, split_cells  # noqa: E402
+from qto.site_export import con_top, export_cell, split_cells  # noqa: E402
 from qto.units import (  # noqa: E402
     PourUnit, Unit, compute_units, fully_excluded_keys, make_excluder, region_from_rings,
 )
@@ -309,7 +309,8 @@ def api_export_site(req: ExportSiteRequest):
     z0, z1 = min(req.z0, req.z1), max(req.z0, req.z1)
     cats = set(req.categories) if req.categories is not None else {s.category for s in model.solids}
     mats = _materials(model, req.materials)
-    cells = [export_cell(model.solids, cid, label, ring, z0, z1, cats, mats, req.step)
+    top = con_top(z0, z1, [s.elevation for s in model.storeys])
+    cells = [export_cell(model.solids, cid, label, ring, z0, z1, cats, mats, req.step, top)
              for cid, label, ring in _site_cells(req.cells, req.zones)]
     uncomputed = {u.key: {"name": u.member_name, "category": u.category, "reason": u.reason}
                   for c in cells for u in c.uncomputed}
@@ -330,7 +331,7 @@ def api_export_site(req: ExportSiteRequest):
         "format": "ifc-concrete-qto/site", "version": 1,
         "exported_at": datetime.now().astimezone().isoformat(timespec="seconds"),
         "source": Path(model.source).name, "title": req.title, "conditions": req.conditions,
-        "z0": z0, "z1": z1, "step": req.step, "total": total,
+        "z0": z0, "z1": z1, "con_top": top, "step": req.step, "total": total,
         "overlap_note": total - sum(c.from_top[-1] + c.slab for c in cells),  # 全スパンを1回で送ったときの値
         "truck_m3": req.truck_m3, "extra_pct": req.extra_pct,
         "storeys": [{"name": s.name, "elevation": s.elevation} for s in model.storeys],

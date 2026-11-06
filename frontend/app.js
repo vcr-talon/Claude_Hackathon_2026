@@ -621,35 +621,62 @@ function toggleCell(p) {
   scheduleRemain();
 }
 
-// 残りのスパンの条件：柱・梁など（スラブ以外）は打ち上がり高さ〜上端、スラブは全厚。重なりは1回だけ数える
+// コン天：高さ範囲の中で一番上のSL（範囲の上端がSLより上、例えば 6SL+600 でも、打設済み高さはこのSLから測る）。
+// 範囲の中にSLがなければ上端。タブレット用の書き出し（site_export.con_top）と同じ決まり
+function conTopStorey() {
+  const inside = state.meta.storeys.filter((s) => s.elevation > state.z0 + 1e-6 && s.elevation <= state.z1 + 1e-6);
+  return inside.length ? inside.reduce((a, b) => (b.elevation > a.elevation ? b : a)) : null;
+}
+const conTopZ = () => Math.min(conTopStorey()?.elevation ?? state.z1, state.z1);
+const hasAboveConTop = () => state.z1 - conTopZ() > 1e-6;
+
+// 残りのスパンの条件：柱・梁など（スラブ以外）は打設済み高さ〜コン天、スラブは全厚。重なりは1回だけ数える。
+// 高さが未計測（null）なら、少なく見積もらないよう柱・梁を範囲の全高さ（コン天より上も）で数える
 function remainParts(ids, depthMm) {
   const polygons = ids.map((id) => [cellById(id).ring]);
-  const top = state.z1, level = Math.max(state.z0, top - depthMm / 1000);
+  const top = depthMm === null ? state.z1 : conTopZ();
+  const level = depthMm === null ? state.z0 : Math.max(state.z0, top - depthMm / 1000);
   const vertical = [...state.categories].filter((c) => c !== 'スラブ');
   const materials = customMaterials([...state.materials]);
   const parts = [];
   if (vertical.length && top - level > 1e-6) parts.push({ z0: level, z1: top, polygons, categories: vertical, member_ids: null, materials });
-  if (state.categories.has('スラブ')) parts.push({ z0: state.z0, z1: top, polygons, categories: ['スラブ'], member_ids: null, materials });
+  if (state.categories.has('スラブ')) parts.push({ z0: state.z0, z1: state.z1, polygons, categories: ['スラブ'], member_ids: null, materials });
   return parts;
+}
+
+async function unitsTotals(units) {
+  const res = await fetch('/api/units', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ units, exclude_registered: false }) });
+  if (!res.ok) throw new Error(await errorDetail(res));
+  return (await res.json()).units.map((u) => u.total);
 }
 
 async function remainVolume(ids, depthMm) {
   const parts = remainParts(ids, depthMm);
   if (!ids.length || !parts.length) return 0;
-  const res = await fetch('/api/units', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ units: [{ name: '残量', parts }], exclude_registered: false }) });
-  if (!res.ok) throw new Error(await errorDetail(res));
-  return (await res.json()).units[0].total;
+  return (await unitsTotals([{ name: '残量', parts }]))[0];
 }
 
-// 打設済み高さの欄（mm）。空欄は未計測で、少なく見積もらないよう柱・梁を全部残りに数える（全高さを打設済み高さにしたのと同じ）
-const fullDepth = () => Math.round((state.z1 - state.z0) * 1000);
+// 高さを入れたときに残りに含めない、コン天より上の柱・梁など（スラブとの重なりは除く）
+async function aboveVolume(ids) {
+  const vertical = [...state.categories].filter((c) => c !== 'スラブ');
+  if (!ids.length || !hasAboveConTop() || !vertical.length) return 0;
+  const polygons = ids.map((id) => [cellById(id).ring]);
+  const materials = customMaterials([...state.materials]);
+  const slab = state.categories.has('スラブ')
+    ? [{ z0: state.z0, z1: state.z1, polygons, categories: ['スラブ'], member_ids: null, materials }] : [];
+  const above = { z0: conTopZ(), z1: state.z1, polygons, categories: vertical, member_ids: null, materials };
+  const [withAbove, slabOnly] = await unitsTotals([{ name: '上', parts: [above, ...slab] }, ...(slab.length ? [{ name: 'スラブ', parts: slab }] : [])]);
+  return withAbove - (slabOnly ?? 0);
+}
+
+// 打設済み高さの欄（mm）。空欄は未計測で、少なく見積もらないよう柱・梁を全部残りに数える
 const remainDepthValue = () => ($('remainDepth').value.trim() === '' ? null : Math.max(0, Number($('remainDepth').value) || 0));
 
-// 打ち上がり高さの目安：残りのスパン（なければ全体）に掛かる、上端付近のスラブ下端・梁せい中央の中央値
+// 打ち上がり高さの目安：残りのスパン（なければ全体）に掛かる、コン天付近のスラブ下端・梁せい中央の中央値（コン天から測る）
 function presetDepth(kind) {
-  const top = state.z1;
-  if (kind === 'none') return fullDepth();
+  const top = conTopZ();
+  if (kind === 'none') return null;
   const rings = (state.remainCells.length ? state.remainCells.map(cellById) : spans).map((c) => c.ring);
   const cat = kind === 'slab' ? 'スラブ' : '梁';
   const ds = [];
@@ -682,16 +709,17 @@ function scheduleRemain() {
   remainTimer = setTimeout(runRemain, 150);
 }
 async function runRemain() {
-  const ids = [...state.remainCells], input = remainDepthValue(), depth = input ?? fullDepth(), seq = ++remainSeq;
+  const ids = [...state.remainCells], input = remainDepthValue(), seq = ++remainSeq;
   if (!ids.length) { $('remainResult').innerHTML = '<span class="muted">残りのスパンを選ぶと計算します</span>'; return; }
   $('remainResult').innerHTML = '<span class="muted">計算中…</span>';
   try {
-    const v = await remainVolume(ids, depth);
+    const [v, above] = await Promise.all([remainVolume(ids, input), input === null ? 0 : aboveVolume(ids)]);
     if (seq !== remainSeq) return;
     const t = truckPlan(v);
     $('remainResult').innerHTML = `<div class="muted">残り ${ids.length} スパン・柱・梁は${input === null ? '未計測（全量で計算）' : `${input ? `コン天から ${input.toLocaleString('ja-JP')} mm 下` : 'コン天'}まで打設済み`}</div>` +
       `<div class="total">${fmt(v)} m³</div>` + (t.extra ? `<div class="muted">割増 ${t.extra}% 込み ${fmt(t.need)} m³</div>` : '') +
-      `<div class="trucks">${t.extra ? '発注の目安：' : '発注の目安（割増なし）：'}${t.text}</div>`;
+      `<div class="trucks">${t.extra ? '発注の目安：' : '発注の目安（割増なし）：'}${t.text}</div>` +
+      (above >= 0.005 ? `<div class="warn">${esc(conTopStorey()?.name ?? 'コン天')}より上の部材 ${fmt(above)} m³ は含まれません（打設済みとして扱います）</div>` : '');
   } catch (e) {
     if (seq === remainSeq) $('remainResult').innerHTML = `<div class="warn">計算できませんでした（詳細：${esc(e.message)}）</div>`;
   }
@@ -701,15 +729,15 @@ async function runRemain() {
 async function exportRemainCsv() {
   const order = [...state.remainCells];
   if (!order.length) { toast('先に残りのスパンを選んでください', 'error'); return; }
-  const levels = [['未計測（全量）', presetDepth('none')], ['梁の中央まで', presetDepth('beam')], ['スラブ下まで', presetDepth('slab')]]
-    .filter(([, d]) => d !== null);
-  const cur = remainDepthValue() ?? fullDepth();
+  const levels = [['梁の中央まで', presetDepth('beam')], ['スラブ下まで', presetDepth('slab')]].filter(([, d]) => d !== null);
+  levels.unshift(['未計測（全量）', null]);
+  const cur = remainDepthValue();
   if (!levels.some(([, d]) => d === cur)) levels.push(['入力値', cur]);
   toast('残量の一覧表を計算しています…', 'info');
   const rows = order.map((_, k) => order.slice(k)); // 残り n, n-1, ..., 1 スパン
   const vols = await Promise.all(rows.flatMap((ids) => levels.map(([, d]) => remainVolume(ids, d))));
   const head = ['残りのスパン数', '残りのスパン（打設順）'];
-  for (const [name, d] of levels) head.push(`${name}${d === fullDepth() ? '' : `：コン天から${d}mm`}（m3）`, `${name}：生コン車`);
+  for (const [name, d] of levels) head.push(`${name}${d === null ? '' : `：コン天から${d}mm`}（m3）`, `${name}：生コン車`);
   const out = [head];
   rows.forEach((ids, r) => {
     const row = [ids.length, ids.map((id) => cellById(id).label).join(' → ')];
@@ -717,6 +745,7 @@ async function exportRemainCsv() {
     out.push(row);
   });
   out.push([], [`生コン車 ${$('truckM3').value} m³／台・割増 ${$('extraPct').value}%・高さ範囲 ${$('rangeText').textContent}`]);
+  if (hasAboveConTop()) out.push([`コン天＝${conTopStorey()?.name ?? '高さ範囲の上'}。高さを入れた列は、${conTopStorey()?.name ?? 'コン天'}より上の部材を含みません（打設済みとして扱います）`]);
   download(`${state.meta.source.replace(/\.ifc$/i, '')}_${stamp()}_残量一覧表.csv`, csvBlob(out));
   toast(`残量の一覧表を書き出しました（${SAVED_TO}）`, 'ok');
 }
@@ -903,7 +932,9 @@ function applyRange() {
   const lowTxt = `${$('lowBase').value}${signed(Number($('lowOff').value) || 0)}`;
   const upTxt = `${$('upBase').value}${signed(Number($('upOff').value) || 0)}`;
   $('rangeText').textContent = `${lowTxt} ～ ${upTxt}（${mm(state.z0)} ～ ${mm(state.z1)} mm）`;
-  $('remainTop').textContent = `コン天＝${upTxt}（高さ範囲の上）`;
+  $('remainTop').textContent = hasAboveConTop()
+    ? `コン天＝${conTopStorey().name}（高さ範囲の中の一番上のSL。高さを入れると、それより上の部材は残りに含めません）`
+    : `コン天＝${upTxt}（高さ範囲の上）`;
   paint();
   scheduleCompute();
 }

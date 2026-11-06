@@ -1,9 +1,9 @@
 // 現場残量アプリの画面。数量の計算は calc.js（PCアプリで作った表を引いて足すだけ）
-import { fmt, fullVolume, parseSiteData, presetMm, totals, remaining, truckPlan } from './calc.js';
+import { aboveMm, conTop, fmt, fullVolume, parseSiteData, presetMm, totals, remaining, truckPlan } from './calc.js';
 import { STATUS_NAME, recordCsv, stamp, zoneKeyOf, zoneTitle } from './record.js';
 import { clearData, loadData, saveData } from './datastore.js';
 
-const APP_VERSION = '1.5.0'; // sw.js の VERSION と合わせる（キャッシュで古い版が動いていないか確かめる用）
+const APP_VERSION = '1.6.0'; // sw.js の VERSION と合わせる（キャッシュで古い版が動いていないか確かめる用）
 const $ = (id) => document.getElementById(id);
 const SVGNS = 'http://www.w3.org/2000/svg';
 const CAT_COLORS = { 柱: '#c62828', 梁: '#ef6c00', 壁: '#0288d1', スラブ: '#a0a4a8', 基礎: '#6d4c41', 階段: '#6a1b9a', その他: '#546e7a' };
@@ -354,8 +354,12 @@ function render() {
   const plan = truckPlan(t.remaining, work.truck, work.extra);
   $('trucks').textContent = (plan.extra ? `発注の目安：割増 ${plan.extra}% 込み ${fmt(plan.need)} m³　` : '発注の目安（割増なし）：') + plan.text;
   $('restInfo').textContent = `残り ${rest} スパン${pouring ? `（うち打設中 ${pouring}）` : ''}`;
+  const topName = (data.storeys ?? []).find((s) => Math.abs(s.elevation - conTop(data)) < 0.005)?.name;
+  // 範囲の上端がSLより上のとき：高さを入れた打設中のスパンは、コン天より上を打設済みとして残りに含めない。その量を知らせる
+  const above = aboveMm(data) > 0 && t.excluded >= 0.005;
+  $('aboveNote').textContent = above ? `${topName ?? 'コン天'}より上の部材 ${fmt(t.excluded)} m³ は含まれません（打設済みとして扱います）` : '';
+  $('aboveNote').classList.toggle('hidden', !above);
   $('undo').disabled = !work.undo.length;
-  const topName = (data.storeys ?? []).find((s) => Math.abs(s.elevation - data.z1) < 0.005)?.name;
   const edit = editId && cellEls.get(editId)?.cell;
   $('depthLabel').textContent = edit ? `選んだスパン（${edit.label}）だけの打設済み高さ` : '柱・梁の打設済み高さ';
   $('ownBox').classList.toggle('hidden', !edit);
@@ -571,7 +575,7 @@ function applyPreset(kind) {
     const pouring = mine.filter((c) => statusOf(c.id) === 'pouring');
     // 長押ししたスパンがあればそのスパンの値、なければ打設中のスパン（なければ全スパン）の中央値
     const target = editId ? [cellEls.get(editId).cell] : pouring.length ? pouring : mine;
-    mm = presetMm(target, kind);
+    mm = presetMm(target, kind, data);
     const where = editId ? 'このスパン' : '打設中のスパン';
     if (mm === null) { toast(`${where}に${kind === 'slab_bottom_mm' ? 'スラブ' : '梁'}がありません。mm を直接入れてください`, 'error'); return; }
   }
