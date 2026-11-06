@@ -3,7 +3,7 @@ import { aboveMm, conTop, fmt, fullVolume, parseSiteData, presetMm, totals, rema
 import { STATUS_NAME, recordCsv, stamp, zoneKeyOf, zoneTitle } from './record.js';
 import { clearData, loadData, saveData } from './datastore.js';
 
-const APP_VERSION = '1.6.1'; // sw.js の VERSION と合わせる（キャッシュで古い版が動いていないか確かめる用）
+const APP_VERSION = '1.6.2'; // sw.js の VERSION と合わせる（キャッシュで古い版が動いていないか確かめる用）
 const $ = (id) => document.getElementById(id);
 const SVGNS = 'http://www.w3.org/2000/svg';
 const CAT_COLORS = { 柱: '#c62828', 梁: '#ef6c00', 壁: '#0288d1', スラブ: '#a0a4a8', 基礎: '#6d4c41', 階段: '#6a1b9a', その他: '#546e7a' };
@@ -153,6 +153,7 @@ function start(d) {
   $('start').classList.add('hidden');
   $('work').classList.remove('hidden');
   buildPlan();
+  fitZoneOnPhone();
   syncInputs();
   updateCells();
   render();
@@ -304,6 +305,7 @@ function renderZoneTabs() {
       renderZoneTabs();
       updateCells();
       render();
+      fitZoneOnPhone();
     });
     return b;
   }));
@@ -314,6 +316,21 @@ function setBulk(on) {
   $('bulk').classList.toggle('active', on);
   $('bulk').textContent = on ? 'まとめて選択中（押すと終了）' : '打設済みをまとめて';
 }
+
+// スマホ（縦は幅600px以下、横は高さ500px以下）では建物全体だと小さすぎるので、選んでいる工区のスパンに合わせて拡大して見せる
+const narrow = () => window.matchMedia('(max-width: 600px), (orientation: landscape) and (max-height: 500px)').matches;
+function zoneView() {
+  const xs = [], ys = [];
+  for (const { cell } of cellEls.values()) {
+    if (!inZone(cell)) continue;
+    for (const [x, y] of cell.ring) { xs.push(x); ys.push(y); }
+  }
+  if (!xs.length) return home;
+  const x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
+  const m = Math.max(x1 - x0, y1 - y0) * 0.04 + 0.5, h = y1 - y0 + 2 * m;
+  return [x0 - m, -y1 - m, x1 - x0 + 2 * m, h * 1.25]; // 下に重なる凡例（スマホでは2段）の分だけ下側を空ける
+}
+const fitZoneOnPhone = () => { if (narrow()) setViewBox(zoneView()); };
 
 function setViewBox(v) {
   vb = v;

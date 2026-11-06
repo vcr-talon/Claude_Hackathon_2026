@@ -2,7 +2,7 @@
 // 電波があるときは常に最新版を取りに行き（古い版が残らない）、圏外のときだけ保存した版を使う。
 // 取りに行くときは毎回サーバーに新しいかを確かめる（GitHub Pages は10分キャッシュしてよいと返すため、
 // そのままだと更新の直後に新しい app.js と古い calc.js が混ざり、アプリが動き出せないことがある）
-const VERSION = '1.6.1'; // app.js の APP_VERSION と合わせる
+const VERSION = '1.6.2'; // app.js の APP_VERSION と合わせる
 const CACHE = `site-app-${VERSION}`;
 const SHELL = ['./', './index.html', './app.js', './calc.js', './record.js', './datastore.js', './style.css', './manifest.webmanifest',
   './icons/icon-192.png', './icons/icon-512.png'];
