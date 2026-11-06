@@ -23,6 +23,15 @@ test('オフライン用に保存するファイルがすべて存在する', ()
   for (const p of shell) assert.doesNotThrow(() => readFileSync(new URL(`../${p}`, import.meta.url)), `${p} が無い`);
 });
 
+test('オフライン用に保存するファイルは、すべて GitHub Pages に公開する（漏れると公開URLでアプリが動き出さない）', () => {
+  const workflow = readFileSync(new URL('../../.github/workflows/site-app-pages.yml', import.meta.url), 'utf8');
+  const shell = [...read('sw.js').match(/SHELL = \[([^\]]+)\]/)[1].matchAll(/'\.\/([^']*)'/g)].map((m) => m[1]).filter(Boolean);
+  for (const p of shell) {
+    const top = p.split('/')[0]; // icons/… はフォルダごと写す
+    assert.ok(workflow.includes(`site_app/${p}`) || workflow.includes(`site_app/${top} `), `${p} が公開の手順（site-app-pages.yml）に無い`);
+  }
+});
+
 test('画面のスクリプトに書き間違い（構文の誤り）がない（app.js はテストから読み込まないため、ここで確かめる）', async () => {
   const { execFileSync } = await import('node:child_process');
   const { fileURLToPath } = await import('node:url');

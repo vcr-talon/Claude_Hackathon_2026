@@ -34,6 +34,10 @@
     </div>
     <div id="lastWork" class="lastwork hidden"></div>
     <p id="startError" class="error hidden"></p>
+    <div id="loadFail" class="loadfail" hidden>
+      <p>アプリを読み込めませんでした。更新の直後で、古い版が残っている可能性があります</p>
+      <button class="bigbtn" type="button" onclick="location.reload()">読み込み直す</button>
+    </div>
     <p class="note"><button class="btn small" data-open-settings>設定・エラーの記録</button></p>
   </section>
 
@@ -140,5 +144,11 @@
   <div id="toast" class="toast hidden"></div>
 
   <script type="module" src="app.js"></script>
+  <script>
+    // アプリ（app.js）が動き出せなかったとき（版が混ざった・読み込みに失敗した）に、何も起きないままにしない
+    window.addEventListener('load', () => setTimeout(() => {
+      if (!window.siteAppReady) document.getElementById('loadFail').hidden = false;
+    }, 3000));
+  </script>
 </body>
 </html>
