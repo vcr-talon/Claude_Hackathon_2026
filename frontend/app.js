@@ -45,6 +45,7 @@ const state = {
   // いま選んでいる施工階（zoningStorey）の分で、ほかの階の分は zoningByStorey に置いておく
   zoningByStorey: {}, // {施工階: {boundaries, seeds, zoneNames}}
   zoningStorey: null,
+  groupOpen: {}, // 打設リストの施工階の見出しを押して開閉した分 {施工階: true/false}。施工階を変えると戻す
   remainCells: [], // 打設終盤の残りのスパン（打設順）
 };
 
@@ -988,6 +989,8 @@ function allZoning() {
 
 function onStoreyChange() {
   followStoreyZoning();
+  state.groupOpen = {}; // 打設リストは新しい施工階の見出しを開き、ほかを閉じる
+  renderUnits();
   const names = state.meta.storeys.map((s) => s.name);
   try { localStorage.setItem(storeyKey(), $('storey').value); } catch { /* 同上 */ }
   if ($('storey').value === ALL_STOREYS) {
@@ -1728,24 +1731,62 @@ async function runUnits() {
   renderUnits();
 }
 
+// 区分が入る施工階：区分の条件の高さの下端（一番低いもの）にあるSLの階。SLより下なら一番下の階、階が無ければ「その他」
+function unitGroup(u) {
+  const z = Math.min(...u.parts.map((p) => Math.min(p.z0, p.z1)));
+  const st = state.meta.storeys;
+  let k = -1;
+  st.forEach((s, j) => { if (s.elevation <= z + 1e-3) k = j; });
+  if (k < 0) return { key: '__other', label: 'その他の高さ', order: -1e9 };
+  const next = st[k + 1];
+  return { key: st[k].name, label: next ? `${st[k].name}～${next.name}` : `${st[k].name}より上`, order: st[k].elevation };
+}
+// 見出しの開閉。押して決めた階はそれを守り、ほかはいま選んでいる施工階だけ開く（施工階を変えると押した分は戻す）
+const groupOpen = (key) => state.groupOpen[key] ?? (key === $('storey').value);
+// 区分の条件の開閉（区分ごと。区分の中身が変わらなければ覚えておく）
+const openParts = new WeakSet();
+
+// 区分1行：色・名前・数量・削除。条件は「▶ 条件 n」で開く（増えても縦に伸びないように）
+function unitRow(i, ur, overlapping) {
+  const u = state.units[i], res = ur?.units[i], open = openParts.has(u);
+  const parts = open ? u.parts.map((p, k) => `<div class="part muted">${u.parts.length > 1 ? `${k + 1}. ` : ''}${esc(partText(p))}` +
+    `${u.parts.length > 1 ? ` <button class="x" data-pdel="${i}:${k}" title="この条件を外す">×</button>` : ''}</div>`).join('') : '';
+  // 追加した行を光らせる。再描画されても光り始めからの経過時間を引き継ぐ
+  const flash = state.flash?.index === i && Date.now() - state.flash.at < 1200
+    ? ` flash" style="animation-delay:-${Date.now() - state.flash.at}ms` : '';
+  return `<li data-uidx="${i}" class="unit ${overlapping.has(i) ? 'overlap' : ''}${flash}"><div class="unitrow">` +
+    `<span class="chip" style="background:${hex(unitColor(i))}"></span>` +
+    `<input class="name" data-uname="${i}" value="${esc(u.name)}" title="区分名（変更できます）">` +
+    `<span class="num">${res ? `${fmt(res.total)} m³` : '計算中…'}</span><button data-udel="${i}">削除</button></div>` +
+    `<div class="muted sub"><button class="link" data-popen="${i}">${open ? '▼' : '▶'} 区分${i + 1}・条件 ${u.parts.length}</button>` +
+    `${res?.uncomputed_count ? `　<span class="warn">⚠ 未計算 ${res.uncomputed_count} 件</span>` : ''}</div>` +
+    `${parts}</li>`;
+}
+
 function renderUnits() {
   const ur = state.unitResult;
   const overlapping = new Set((ur?.overlaps ?? []).filter((o) => o.members.length).flatMap((o) => [o.a, o.b]));
   $('unitHelp').classList.toggle('hidden', state.units.length > 0);
   $('exportCsv').classList.toggle('hidden', !state.units.length);
-  $('unitList').innerHTML = state.units.map((u, i) => {
-    const res = ur?.units[i];
-    const parts = u.parts.map((p, k) => `<div class="part muted">${u.parts.length > 1 ? `${k + 1}. ` : ''}${esc(partText(p))}` +
-      `${u.parts.length > 1 ? ` <button class="x" data-pdel="${i}:${k}" title="この条件を外す">×</button>` : ''}</div>`).join('');
-    // 追加した行を光らせる。再描画されても光り始めからの経過時間を引き継ぐ
-    const flash = state.flash?.index === i && Date.now() - state.flash.at < 1200
-      ? ` flash" style="animation-delay:-${Date.now() - state.flash.at}ms` : '';
-    return `<li data-uidx="${i}" class="${overlapping.has(i) ? 'overlap' : ''}${flash}"><div class="unitrow">` +
-      `<span class="chip" style="background:${hex(unitColor(i))}"></span>` +
-      `<input class="name" data-uname="${i}" value="${esc(u.name)}" title="区分名（変更できます）">` +
-      `<span class="num">${res ? `${fmt(res.total)} m³` : '計算中…'}</span><button data-udel="${i}">削除</button></div>` +
-      `<div class="muted">区分${i + 1}${res?.uncomputed_count ? `　<span class="warn">⚠ 未計算 ${res.uncomputed_count} 件</span>` : ''}</div>` +
-      `${parts}</li>`;
+  // 施工階ごとに見出しでまとめる。いま選んでいる施工階は開き、ほかの階は閉じて小計だけ（見出しを押すと開閉）
+  // 追加・まとめた区分の階は、閉じていても開いて見せる
+  const fresh = state.flash && Date.now() - state.flash.at < 300 && state.units[state.flash.index];
+  if (fresh) state.groupOpen[unitGroup(fresh).key] = true;
+  const groups = [];
+  state.units.forEach((u, i) => {
+    const g = unitGroup(u);
+    let grp = groups.find((x) => x.key === g.key);
+    if (!grp) groups.push(grp = { ...g, idx: [] });
+    grp.idx.push(i);
+  });
+  groups.sort((a, b) => a.order - b.order);
+  $('unitList').innerHTML = groups.map((g) => {
+    const open = groupOpen(g.key);
+    const total = g.idx.every((i) => ur?.units[i]) ? `${fmt(g.idx.reduce((a, i) => a + ur.units[i].total, 0))} m³` : '計算中…';
+    const head = `<li class="grouphead" data-group="${esc(g.key)}" title="押すと開く・閉じる">` +
+      `<span class="tri">${open ? '▼' : '▶'}</span><span class="gname">${esc(g.label)}</span>` +
+      `<span class="muted">${g.idx.length}区分</span><span class="num">${total}</span></li>`;
+    return head + (open ? g.idx.map((i) => unitRow(i, ur, overlapping)).join('') : '');
   }).join('');
   renderUnitSummary();
   // 下段が上限まで広がった後も、追加した行が見えるようにする
@@ -2113,6 +2154,19 @@ $('resultBody').addEventListener('change', (ev) => {
   registerUnit(Number(ev.target.dataset.addto), Number(ev.target.value));
 });
 $('unitList').addEventListener('click', (ev) => {
+  const head = ev.target.closest('li[data-group]');
+  if (head) {
+    const k = head.dataset.group;
+    state.groupOpen[k] = !groupOpen(k);
+    renderUnits();
+    return;
+  }
+  if (ev.target.dataset.popen !== undefined) {
+    const u = state.units[Number(ev.target.dataset.popen)];
+    if (openParts.has(u)) openParts.delete(u); else openParts.add(u);
+    renderUnits();
+    return;
+  }
   const { udel, pdel } = ev.target.dataset;
   if (udel !== undefined) {
     pushHistory();

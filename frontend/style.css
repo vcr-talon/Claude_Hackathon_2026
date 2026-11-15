@@ -148,6 +148,16 @@ table.mini td.num { text-align: right; font-variant-numeric: tabular-nums; }
 .units button.x { padding: 0 6px; font-size: 11px; line-height: 1.4; }
 
 .units li { display: block; }
+/* 施工階の見出し（押すと開閉）。区分は見出しの下に1行ずつ */
+.units li.grouphead { display: flex; align-items: center; gap: 8px; cursor: pointer; background: #eef2f7; font-weight: bold; }
+.units li.grouphead:hover { background: #e3e9f1; }
+.units li.grouphead .tri { width: 1em; color: #546e7a; font-size: 11px; }
+.units li.grouphead .gname { flex: 1; }
+.units li.grouphead .muted { font-weight: normal; }
+.units li.unit { margin-left: 10px; }
+.units .sub { margin-top: 2px; }
+.units button.link { background: none; border: 0; padding: 0; color: #546e7a; font-size: 12px; cursor: pointer; }
+.units button.link:hover { text-decoration: underline; }
 .units li.overlap { background: #fff8e1; border-color: #f9a825; }
 .units .unitrow { display: flex; align-items: center; gap: 6px; }
 .units input.name { flex: 1; min-width: 0; padding: 3px 4px; border: 1px solid var(--line); border-radius: 4px; }
