@@ -118,6 +118,23 @@ test('上端がSLより上なら、打設済み高さはSLから測り、SLよ�
   near(t.done + t.remaining, t.planned); // 含めなかった分は打設済みに入る
 });
 
+test('SLより上に続く部材（パラペット）は、SLから下の部分も高さを入れた打設中なら残りから外す（D33）', () => {
+  // from_top [0, 1.0, 1.6, 2.0]。そのうちSLより上に続く部材の分 rise_from_top [0, 1.0, 1.5, 1.7]
+  const a = { ...ABOVE.cells[0], rise_from_top: [0, 1.0, 1.5, 1.7] };
+  const data = { ...ABOVE, cells: [a] };
+  // パラペットの、SL（上端から70mm）からSLの30mm下までの部分
+  const band = interp(a.rise_from_top, 0.05, 0.12, 100) - interp(a.rise_from_top, 0.05, 0.12, 70);
+  assert.ok(band > 0.1);
+  near(remaining(a, 'pouring', 30, data), 1.6 - 1.24 - band + 1.5);
+  near(excludedAbove(a, 'pouring', 30, data), 1.24 + band);
+  near(remaining(a, 'pouring', 0, data), 1.5); // SLまで打設済みなら今までどおり
+  near(remaining(a, 'pouring', null, data), fullVolume(a)); // 未計測は全量（少なく見積もらない）
+  const t = totals(data, () => 'pouring', () => 30);
+  near(t.done + t.remaining, t.planned);
+  // rise_from_top の無いスパン（古い書き出し・続く部材の無いスパン）は今までどおり
+  near(remaining(ABOVE.cells[0], 'pouring', 30, ABOVE), 1.6 - 1.24 + 1.5);
+});
+
 test('目安ボタンの値はコン天からの距離に直す。SLより上の部材の値は使わない', () => {
   assert.equal(presetMm(ABOVE.cells, 'slab_bottom_mm', ABOVE), 130); // [180, 200] − 70 の上側
   assert.equal(presetMm(ABOVE.cells, 'beam_mid_mm', ABOVE), 230);

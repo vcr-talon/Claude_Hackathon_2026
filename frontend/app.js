@@ -8,6 +8,9 @@ const $ = (id) => document.getElementById(id);
 const CAT_COLORS = { 柱: 0xc62828, 梁: 0xef6c00, 壁: 0x0288d1, スラブ: 0xa0a4a8, 基礎: 0x6d4c41, 階段: 0x6a1b9a, その他: 0x546e7a };
 const ZONE_LABELS = ['A', 'B', 'C', 'D', 'E', 'F'];
 const ZONE_COLORS = { A: 0xe53935, B: 0x1e88e5, C: 0x43a047, D: 0xfb8c00, E: 0x8e24aa, F: 0x00897b };
+// 工区割をしない区分は、打設リストに入れた順にこの順の色を付ける（7つ目からは最初に戻る）
+const UNIT_COLOR_ORDER = ['D', 'E', 'F', 'A', 'B', 'C'];
+const EXCLUDED_TINT = 0.35; // 入れ済みの部分の色に混ぜる白の割合
 const SELECT_COLOR = 0xffd600;
 const ERROR_COLOR = 0xff1744;
 const DIM_COLOR = 0xd5d8dc;
@@ -38,6 +41,10 @@ const state = {
   hiddenKeys: new Set(), // 高さ範囲内がすべて登録済みの立体（表示しない）
   slabSee: true, // 平面表示でスラブを透かす
   zoneNames: {}, // 工区の表示名 {A: '1工区', ...}。内部のキーはA〜Fのまま
+  // 工区割（境界線・工区の位置・工区名）は施工階ごとに覚える。上の boundaries・seeds・zoneNames は
+  // いま選んでいる施工階（zoningStorey）の分で、ほかの階の分は zoningByStorey に置いておく
+  zoningByStorey: {}, // {施工階: {boundaries, seeds, zoneNames}}
+  zoningStorey: null,
   remainCells: [], // 打設終盤の残りのスパン（打設順）
 };
 
@@ -49,7 +56,8 @@ const zoneTitle = (l) => state.zoneNames[l] || `工区 ${l}`;
 // 境界線・工区名・打設リストを変える直前の状態を積む
 const HISTORY_MAX = 30;
 const undoStack = [], redoStack = [];
-const snapshot = () => structuredClone({ boundaries: state.boundaries, seeds: state.seeds, units: state.units, zoneNames: state.zoneNames });
+const snapshot = () => structuredClone({ boundaries: state.boundaries, seeds: state.seeds, units: state.units, zoneNames: state.zoneNames,
+  zoningByStorey: state.zoningByStorey, zoningStorey: state.zoningStorey });
 function pushHistory(s = snapshot()) {
   undoStack.push(s);
   if (undoStack.length > HISTORY_MAX) undoStack.shift();
@@ -59,6 +67,7 @@ function restoreHistory(from, to, msg) {
   if (!from.length) return;
   to.push(snapshot());
   Object.assign(state, from.pop());
+  followStoreyZoning(); // 別の階で記録した状態に戻したときも、いま選んでいる施工階の工区割を見せる
   cancelPending();
   renderBoundaryList();
   renderZoneLabels();
@@ -99,6 +108,9 @@ scene.add(modelGroup, excludedGroup, overlay);
 const clipBottom = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
 const clipTop = new THREE.Plane(new THREE.Vector3(0, 0, -1), 0);
 const clips = [clipBottom, clipTop];
+// 下側の切断面は高さ範囲の下端より少し上に置く。下の階のスラブ上面は下端（例：6SL）とちょうど同じ高さにあり、
+// 下端ぴったりで切ると、計算の誤差で残る点と消える点がまだらに混ざって映り込むため（表示だけ。数量は変わらない）
+const CLIP_BOTTOM_LIFT = 0.003; // m
 
 const planCam = new THREE.OrthographicCamera(-50, 50, 50, -50, 0.1, 20000);
 planCam.up.set(0, 1, 0);
@@ -196,29 +208,52 @@ function buildMeshes(solids) {
   });
 }
 
-const excludedMat = new THREE.MeshLambertMaterial({
-  color: 0x4f5459, side: THREE.DoubleSide, clippingPlanes: clips, // スラブの薄い灰色と区別できる濃さ
-  polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -16, // 元の部材の面より手前に描く
-});
-function drawExcluded(mesh) {
+// 打設リストに入れ済みの部分は、区分ごとの色（工区の色、工区なしは D→E→F→A→B→C の順）を淡くして塗る。
+// 今の計算範囲の部材（種別の色）と見分けられるよう、白を混ぜて淡くする
+// rank：先に入れた区分ほど大きい。区分の境目で面がぴったり重なる所（差し引いた残りの厚みのないかけら）は、
+// 先に入れた区分を手前に描いて、その色が見えるようにする（数量の配分と同じ「先に入れた区分が優先」）
+const excludedMats = new Map();
+function excludedMat(color, rank) {
+  const k = `${color}:${rank}`;
+  if (!excludedMats.has(k)) {
+    excludedMats.set(k, new THREE.MeshLambertMaterial({
+      color: new THREE.Color(color).lerp(new THREE.Color(0xffffff), EXCLUDED_TINT),
+      side: THREE.DoubleSide, clippingPlanes: clips,
+      // 元の部材の面より手前に描く。さらに先に入れた区分ほど手前に
+      polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -16 - 8 * rank,
+    }));
+  }
+  return excludedMats.get(k);
+}
+// pieces：[{ mesh, color }]（先に入れた区分から順）
+function drawExcluded(pieces) {
   excludedGroup.clear();
-  if (!mesh) return;
-  const g = new THREE.BufferGeometry();
-  g.setAttribute('position', new THREE.BufferAttribute(decode(mesh.pos, Float32Array), 3));
-  g.setIndex(new THREE.BufferAttribute(decode(mesh.idx, Uint32Array), 1));
-  const flat = g.toNonIndexed();
-  flat.computeVertexNormals();
-  const mesh3 = new THREE.Mesh(flat, excludedMat);
-  mesh3.add(new THREE.LineSegments(new THREE.EdgesGeometry(g, 25), edgeMat)); // 元の形状を隠しても輪郭が分かるように
-  excludedGroup.add(mesh3);
+  for (const [i, { mesh, color }] of pieces.entries()) {
+    if (!mesh) continue;
+    const rank = pieces.length - i;
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(decode(mesh.pos, Float32Array), 3));
+    g.setIndex(new THREE.BufferAttribute(decode(mesh.idx, Uint32Array), 1));
+    const flat = g.toNonIndexed();
+    flat.computeVertexNormals();
+    const mesh3 = new THREE.Mesh(flat, excludedMat(color, rank));
+    mesh3.add(new THREE.LineSegments(new THREE.EdgesGeometry(g, 25), edgeMat)); // 元の形状を隠しても輪郭が分かるように
+    excludedGroup.add(mesh3);
+  }
 }
 
+// 「選択した部材だけで集計」が効いているか。チェックしていても、選んだ部材が無いとき（何もない所をクリックして
+// 選択が外れたときなど）は絞り込まず、すべての部材で集計する（0部材で集計して数量も表示も消えないように）
+const bySelection = () => state.selectedOnly && state.selected.size > 0;
+
 function paint() {
-  const dimOthers = state.selectedOnly && state.selected.size > 0;
+  const dimOthers = bySelection();
   for (const m of meshes) {
     const u = m.userData;
     m.visible = state.categories.has(u.category) && state.materials.has(u.material)
-      && u.bbox.max.z > state.z0 && u.bbox.min.z < state.z1
+      // 下の階の部材（上端が高さ範囲の下端ちょうど＝例：5階の梁・スラブの上面が6SL）は、切断面に頼らず描かない。
+      // 切断面だけだと、輪郭線が点線のように残ることがある（表示だけ。数量は変わらない）
+      && u.bbox.max.z > state.z0 + CLIP_BOTTOM_LIFT && u.bbox.min.z < state.z1
       && !state.hiddenKeys.has(u.key); // 全部が登録済みの部材は灰色の除外部分だけを見せる
     let color = CAT_COLORS[u.category] ?? CAT_COLORS['その他'];
     let opacity = 1;
@@ -447,13 +482,19 @@ function drawLines() {
 
 function drawZones() {
   zoneGroup.clear();
+  // 平面表示：高さ範囲の上端に、部材より手前に重ねて描く（どの工区か一目で分かるように）。
+  // 3D表示：高さ範囲の下端（床の高さ）に置き、部材に隠れるようにする。部材そのものに工区の色を重ねないため
+  // （下の階で打設リストに入れた部分が、今の階の工区の色と混ざって見えないように）
+  const plan = state.view === 'plan';
   for (const z of state.result?.zones ?? []) {
     if (!z.polygons) continue;
     for (const rings of z.polygons) {
       const mesh = new THREE.Mesh(new THREE.ShapeGeometry(ringsShape(rings)), new THREE.MeshBasicMaterial({
-        color: ZONE_COLORS[z.label] ?? 0x888888, transparent: true, opacity: 0.16, depthTest: false, side: THREE.DoubleSide,
+        color: ZONE_COLORS[z.label] ?? 0x888888, transparent: true, opacity: 0.16, depthTest: !plan, depthWrite: false,
+        side: THREE.DoubleSide,
       }));
       mesh.renderOrder = 3;
+      if (!plan) mesh.position.z = state.z0 - overlay.position.z + 0.005;
       zoneGroup.add(mesh);
     }
   }
@@ -632,14 +673,23 @@ const hasAboveConTop = () => state.z1 - conTopZ() > 1e-6;
 
 // 残りのスパンの条件：柱・梁など（スラブ以外）は打設済み高さ〜コン天、スラブは全厚。重なりは1回だけ数える。
 // 高さが未計測（null）なら、少なく見積もらないよう柱・梁を範囲の全高さ（コン天より上も）で数える
-function remainParts(ids, depthMm) {
+// 高さを入れたときは、コン天より上に続く部材（パラペット・逆梁など。柱は除く）を外す（D33）。上端から流し込むので、
+// コン天から下の部分もその部材と一緒に打ち終わるため。keepRisers=true は外す前の量（含めない量を求めるのに使う）
+const RISE_EPS = 0.005; // m。上端がコン天からこれ以上高い部材を「コン天より上に続く部材」とする（書き出しと同じ）
+function remainParts(ids, depthMm, keepRisers = false) {
   const polygons = ids.map((id) => [cellById(id).ring]);
   const top = depthMm === null ? state.z1 : conTopZ();
   const level = depthMm === null ? state.z0 : Math.max(state.z0, top - depthMm / 1000);
   const vertical = [...state.categories].filter((c) => c !== 'スラブ');
   const materials = customMaterials([...state.materials]);
   const parts = [];
-  if (vertical.length && top - level > 1e-6) parts.push({ z0: level, z1: top, polygons, categories: vertical, member_ids: null, materials });
+  const topAtMost = depthMm !== null && hasAboveConTop() && !keepRisers ? top + RISE_EPS : null;
+  if (vertical.length && top - level > 1e-6) {
+    // 柱は続く部材として外さない（上の階までつながった柱のスラブ厚の部分はスラブと一緒に打つ。書き出しと同じ）
+    const cols = vertical.filter((c) => c === '柱'), others = vertical.filter((c) => c !== '柱');
+    if (cols.length) parts.push({ z0: level, z1: top, polygons, categories: cols, member_ids: null, materials });
+    if (others.length) parts.push({ z0: level, z1: top, polygons, categories: others, member_ids: null, materials, top_at_most: topAtMost });
+  }
   if (state.categories.has('スラブ')) parts.push({ z0: state.z0, z1: state.z1, polygons, categories: ['スラブ'], member_ids: null, materials });
   return parts;
 }
@@ -651,13 +701,19 @@ async function unitsTotals(units) {
   return (await res.json()).units.map((u) => u.total);
 }
 
-async function remainVolume(ids, depthMm) {
-  const parts = remainParts(ids, depthMm);
+async function remainVolume(ids, depthMm, keepRisers = false) {
+  const parts = remainParts(ids, depthMm, keepRisers);
   if (!ids.length || !parts.length) return 0;
   return (await unitsTotals([{ name: '残量', parts }]))[0];
 }
 
-// 高さを入れたときに残りに含めない、コン天より上の柱・梁など（スラブとの重なりは除く）
+// 高さを入れたときに残りに含めない量：コン天より上の柱・梁など（スラブとの重なりは除く）と、
+// コン天より上に続く部材のコン天から下の部分
+async function excludedVolume(ids, depthMm, remain) {
+  const [above, before] = await Promise.all([aboveVolume(ids),
+    hasAboveConTop() ? remainVolume(ids, depthMm, true) : remain]);
+  return above + Math.max(0, before - remain);
+}
 async function aboveVolume(ids) {
   const vertical = [...state.categories].filter((c) => c !== 'スラブ');
   if (!ids.length || !hasAboveConTop() || !vertical.length) return 0;
@@ -713,13 +769,14 @@ async function runRemain() {
   if (!ids.length) { $('remainResult').innerHTML = '<span class="muted">残りのスパンを選ぶと計算します</span>'; return; }
   $('remainResult').innerHTML = '<span class="muted">計算中…</span>';
   try {
-    const [v, above] = await Promise.all([remainVolume(ids, input), input === null ? 0 : aboveVolume(ids)]);
+    const v = await remainVolume(ids, input);
+    const above = input === null ? 0 : await excludedVolume(ids, input, v);
     if (seq !== remainSeq) return;
     const t = truckPlan(v);
     $('remainResult').innerHTML = `<div class="muted">残り ${ids.length} スパン・柱・梁は${input === null ? '未計測（全量で計算）' : `${input ? `コン天から ${input.toLocaleString('ja-JP')} mm 下` : 'コン天'}まで打設済み`}</div>` +
       `<div class="total">${fmt(v)} m³</div>` + (t.extra ? `<div class="muted">割増 ${t.extra}% 込み ${fmt(t.need)} m³</div>` : '') +
       `<div class="trucks">${t.extra ? '発注の目安：' : '発注の目安（割増なし）：'}${t.text}</div>` +
-      (above >= 0.005 ? `<div class="warn">${esc(conTopStorey()?.name ?? 'コン天')}より上の部材 ${fmt(above)} m³ は含まれません（打設済みとして扱います）</div>` : '');
+      (above >= 0.005 ? `<div class="warn">${esc(conTopStorey()?.name ?? 'コン天')}より上に立ち上がる部材（パラペットなど）${fmt(above)} m³ は含まれません（打設済みとして扱います）</div>` : '');
   } catch (e) {
     if (seq === remainSeq) $('remainResult').innerHTML = `<div class="warn">計算できませんでした（詳細：${esc(e.message)}）</div>`;
   }
@@ -745,7 +802,7 @@ async function exportRemainCsv() {
     out.push(row);
   });
   out.push([], [`生コン車 ${$('truckM3').value} m³／台・割増 ${$('extraPct').value}%・高さ範囲 ${$('rangeText').textContent}`]);
-  if (hasAboveConTop()) out.push([`コン天＝${conTopStorey()?.name ?? '高さ範囲の上'}。高さを入れた列は、${conTopStorey()?.name ?? 'コン天'}より上の部材を含みません（打設済みとして扱います）`]);
+  if (hasAboveConTop()) out.push([`コン天＝${conTopStorey()?.name ?? '高さ範囲の上'}。高さを入れた列は、${conTopStorey()?.name ?? 'コン天'}より上に立ち上がる部材（パラペットなど。SLから下の部分も上から流し込むので一緒に打ち終わる）を含みません（打設済みとして扱います）`]);
   download(`${state.meta.source.replace(/\.ifc$/i, '')}_${stamp()}_残量一覧表.csv`, csvBlob(out));
   toast(`残量の一覧表を書き出しました（${SAVED_TO}）`, 'ok');
 }
@@ -870,7 +927,7 @@ function setView(view) {
   planCtl.enabled = view === 'plan';
   perspCtl.enabled = view !== 'plan';
   document.querySelectorAll('button.view').forEach((b) => b.classList.toggle('active', b.dataset.view === view));
-  if (state.meta) { updateBand(); paint(); } // スラブの透かしは平面表示だけ
+  if (state.meta) { updateBand(); paint(); drawZones(); } // スラブの透かしは平面表示だけ。工区の色の面は平面と3Dで置き方が違う
   $('slabSeeWrap').classList.toggle('hidden', view !== 'plan');
   // 境界線・工区名は平面でしか操作できないので、3Dに切り替えたらモードを抜ける
   if (view !== 'plan' && (state.mode === 'boundary' || state.mode === 'zone')) setMode(state.mode);
@@ -899,7 +956,38 @@ function fillStoreys() {
 const wholeName = () => ($('storey').value === ALL_STOREYS ? '建物全体' : 'フロア全体');
 const storeyKey = () => `qto.storey.${state.meta.source}`;
 
+// いまの工区割を、その施工階の分として置いておく（何も引いていない階は覚えない）
+function stashZoning() {
+  const k = state.zoningStorey;
+  if (k === null) return;
+  if (state.boundaries.length || state.seeds.length || Object.keys(state.zoneNames).length) {
+    state.zoningByStorey[k] = { boundaries: state.boundaries, seeds: state.seeds, zoneNames: state.zoneNames };
+  } else {
+    delete state.zoningByStorey[k];
+  }
+}
+// いま選んでいる施工階の工区割に切り替える。打設リストに入れた区分（色付きの躯体）はそのまま残る
+function followStoreyZoning() {
+  const k = $('storey').value;
+  if (state.zoningStorey === k) return;
+  stashZoning();
+  const z = state.zoningByStorey[k];
+  state.boundaries = z?.boundaries ?? [];
+  state.seeds = z?.seeds ?? [];
+  state.zoneNames = z?.zoneNames ?? {};
+  state.zoningStorey = k;
+  cancelPending();
+  renderBoundaryList();
+  renderZoneLabels();
+}
+// 保存用：すべての施工階の工区割（いまの階の分も入れる）
+function allZoning() {
+  stashZoning();
+  return structuredClone(state.zoningByStorey);
+}
+
 function onStoreyChange() {
+  followStoreyZoning();
   const names = state.meta.storeys.map((s) => s.name);
   try { localStorage.setItem(storeyKey(), $('storey').value); } catch { /* 同上 */ }
   if ($('storey').value === ALL_STOREYS) {
@@ -925,7 +1013,7 @@ function applyRange() {
   const up = elev($('upBase').value) + (Number($('upOff').value) || 0) / 1000;
   state.z0 = Math.min(lo, up);
   state.z1 = Math.max(lo, up);
-  clipBottom.constant = -state.z0;
+  clipBottom.constant = -(state.z0 + CLIP_BOTTOM_LIFT);
   clipTop.constant = state.z1;
   overlay.position.z = state.z1 + 0.02;
   aimPersp(); // 3Dのカメラをその階の高さに向ける
@@ -1406,10 +1494,11 @@ async function runCompute() {
     boundaries: state.boundaries.map((b) => b.points),
     seeds: state.seeds,
     categories: [...state.categories],
-    member_ids: state.selectedOnly ? [...state.selected] : null,
+    member_ids: bySelection() ? [...state.selected] : null,
     materials: [...state.materials],
     exclude_parts: state.excludeRegistered ? allParts() : [],
   };
+  const partColors = allPartColors();
   const res = await fetch('/api/compute', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
   if (seq !== computeSeq) return;
   if (!res.ok) {
@@ -1421,7 +1510,9 @@ async function runCompute() {
   // 登録時に「計算した時点の条件」をそのまま使えるよう、条件も一緒に持っておく
   state.result = { ...(await res.json()), request: body, rangeText: $('rangeText').textContent };
   state.regions = state.result.regions;
-  drawExcluded(state.result.excluded_mesh);
+  const byPart = state.result.excluded_by_part;
+  drawExcluded(byPart ? byPart.map((o) => ({ mesh: o.mesh, color: partColors[o.part] ?? 0x4f5459 }))
+    : [{ mesh: state.result.excluded_mesh, color: 0x4f5459 }]);
   state.hiddenKeys = new Set(state.result.hidden_keys);
   paint();
   drawZones();
@@ -1438,9 +1529,12 @@ function renderResults() {
   if (!allCats) filters.push(`部材種別：${[...state.categories].join('・')}`);
   const mats = customMaterials([...state.materials]);
   if (mats) filters.push(`材料：${mats.join('・')}`);
-  if (state.selectedOnly) filters.push(`選択部材のみ（${state.selected.size}部材）`);
+  if (bySelection()) filters.push(`選択部材のみ（${state.selected.size}部材）`);
   let html = `<div class="muted">高さ範囲：${esc($('rangeText').textContent)}</div>`;
   if (filters.length) html += `<div class="muted">絞り込み：${esc(filters.join('／'))}</div>`;
+  if (state.selectedOnly && !state.selected.size) {
+    html += '<div class="help">選んだ部材がないので、すべての部材で集計しています（部材を選ぶと、その部材だけの集計になります）</div>';
+  }
   const labeled = r.zones.filter((z) => z.polygons);
   if (state.boundaries.length && !labeled.length) {
     html += `<div class="help">工区名が未設定です。「工区名を付ける」で範囲をクリックしてください（下は${wholeName()}の数量）</div>`;
@@ -1466,7 +1560,7 @@ function renderResults() {
     html += `<div class="muted">この条件の数量</div><div class="total">${fmt(whole(z))} <small>m³</small></div>`;
     if (z.excluded > 0.0005) {
       html += '<div class="breakdown">' +
-        `<span class="done">うち打設リストに入れ済み（灰色表示）</span><span class="num done">${fmt(z.excluded)} m³</span>` +
+        `<span class="done">うち打設リストに入れ済み（リストの行の左と同じ色で表示）</span><span class="num done">${fmt(z.excluded)} m³</span>` +
         `<span class="open">まだ入れていない分（追加できる分）</span><span class="num open">${fmt(z.total)} m³</span></div>`;
     }
     // 常に見せるのは工区名・数量・種別内訳・未計算の警告・追加ボタンだけ。根拠は折りたたむ
@@ -1541,6 +1635,17 @@ function customMaterials(list) {
   return JSON.stringify(sorted) === JSON.stringify(defaultMaterials()) ? null : sorted;
 }
 const allParts = () => state.units.flatMap((u) => u.parts.map(partJson));
+
+// 区分の色：工区割をした区分はその工区の色。工区割をしない区分は、打設リストに入れた順に D→E→F→A→B→C
+const unitZone = (u) => u.parts.find((p) => ZONE_COLORS[p.label] !== undefined)?.label;
+function unitColor(i) {
+  const zone = unitZone(state.units[i]);
+  if (zone) return ZONE_COLORS[zone];
+  const n = state.units.slice(0, i).filter((u) => !unitZone(u)).length;
+  return ZONE_COLORS[UNIT_COLOR_ORDER[n % UNIT_COLOR_ORDER.length]];
+}
+// 条件ごとの色（allParts と同じ並び）。工区の付いた条件はその工区の色、付いていない条件は区分の色
+const allPartColors = () => state.units.flatMap((u, i) => u.parts.map((p) => ZONE_COLORS[p.label] ?? unitColor(i)));
 
 // target が null なら新しい区分、数値ならその区分に条件を追加する
 function registerUnit(zi, target = null) {
@@ -1630,14 +1735,13 @@ function renderUnits() {
   $('exportCsv').classList.toggle('hidden', !state.units.length);
   $('unitList').innerHTML = state.units.map((u, i) => {
     const res = ur?.units[i];
-    const label = u.parts.find((p) => p.label)?.label;
     const parts = u.parts.map((p, k) => `<div class="part muted">${u.parts.length > 1 ? `${k + 1}. ` : ''}${esc(partText(p))}` +
       `${u.parts.length > 1 ? ` <button class="x" data-pdel="${i}:${k}" title="この条件を外す">×</button>` : ''}</div>`).join('');
     // 追加した行を光らせる。再描画されても光り始めからの経過時間を引き継ぐ
     const flash = state.flash?.index === i && Date.now() - state.flash.at < 1200
       ? ` flash" style="animation-delay:-${Date.now() - state.flash.at}ms` : '';
     return `<li data-uidx="${i}" class="${overlapping.has(i) ? 'overlap' : ''}${flash}"><div class="unitrow">` +
-      `<span class="chip" style="background:${hex(ZONE_COLORS[label] ?? 0x90a4ae)}"></span>` +
+      `<span class="chip" style="background:${hex(unitColor(i))}"></span>` +
       `<input class="name" data-uname="${i}" value="${esc(u.name)}" title="区分名（変更できます）">` +
       `<span class="num">${res ? `${fmt(res.total)} m³` : '計算中…'}</span><button data-udel="${i}">削除</button></div>` +
       `<div class="muted">区分${i + 1}${res?.uncomputed_count ? `　<span class="warn">⚠ 未計算 ${res.uncomputed_count} 件</span>` : ''}</div>` +
@@ -1698,7 +1802,7 @@ function showUnitOutline(i) {
   const [b0, b1, b2, b3] = state.meta.bounds;
   const whole = [[[[b0, b1], [b2, b1], [b2, b3], [b0, b3], [b0, b1]]]]; // 工区なし＝モデル全体
   for (const p of state.units[i].parts) {
-    const color = ZONE_COLORS[p.label] ?? 0x37474f;
+    const color = ZONE_COLORS[p.label] ?? unitColor(i);
     for (const rings of p.polygons ?? whole) {
       const shape = new THREE.Shape(rings[0].map(([x, y]) => new THREE.Vector2(x, y)));
       shape.holes = rings.slice(1).map((r) => new THREE.Path(r.map(([x, y]) => new THREE.Vector2(x, y))));
@@ -1724,10 +1828,12 @@ const RANGE_IDS = ['storey', 'upBase', 'upOff', 'lowBase', 'lowOff'];
 function savePlan() {
   if (!state.meta) return;
   const plan = {
-    format: PLAN_FORMAT, version: 2, saved_at: new Date().toISOString(), source: state.meta.source,
+    format: PLAN_FORMAT, version: 3, saved_at: new Date().toISOString(), source: state.meta.source,
     excludeRegistered: state.excludeRegistered,
     range: Object.fromEntries(RANGE_IDS.map((id) => [id, $(id).value])),
+    // いまの施工階の工区割（version 2 までと同じ場所）と、施工階ごとの工区割（version 3〜）
     boundaries: state.boundaries, seeds: state.seeds, zoneNames: state.zoneNames,
+    zoningByStorey: allZoning(),
     categories: [...state.categories], materials: [...state.materials], selected: [...state.selected], selectedOnly: state.selectedOnly,
     units: state.units,
   };
@@ -1808,7 +1914,8 @@ function applyPlan(plan) {
   const missing = ['storey', 'upBase', 'lowBase'].map((id) => plan.range[id]).filter((n) => n !== ALL_STOREYS && !storeys.has(n));
   if (missing.length) throw new Error(`開いているIFCに無い階があります（${[...new Set(missing)].join('、')}）`);
   const tags = new Set(state.meta.grids.map((a) => a.tag));
-  const lost = plan.boundaries.flatMap(boundaryLegs).map((l) => l.axis).filter((t) => !tags.has(t));
+  const allBoundaries = [plan.boundaries, ...Object.values(plan.zoningByStorey ?? {}).map((z) => z.boundaries ?? [])].flat();
+  const lost = allBoundaries.flatMap(boundaryLegs).map((l) => l.axis).filter((t) => !tags.has(t));
   if (lost.length) throw new Error(`開いているIFCに無い通り芯があります（${[...new Set(lost)].join('、')}）`);
 
   cancelPending();
@@ -1817,6 +1924,9 @@ function applyPlan(plan) {
   state.boundaries = plan.boundaries;
   state.seeds = plan.seeds;
   state.zoneNames = plan.zoneNames ?? {}; // 名前のない古いファイルはA〜Fのまま
+  // 施工階ごとの工区割。version 2 までのファイルは、保存したときの施工階の分だけ
+  state.zoningByStorey = structuredClone(plan.zoningByStorey ?? {});
+  state.zoningStorey = plan.range.storey;
   renderZoneLabels();
   state.categories = new Set(plan.categories.filter((c) => state.meta.categories.includes(c)));
   for (const cb of document.querySelectorAll('#categories input')) cb.checked = state.categories.has(cb.dataset.cat);
@@ -1910,6 +2020,8 @@ async function loadModel() {
   state.boundaries = [];
   state.seeds = [];
   state.zoneNames = {};
+  state.zoningByStorey = {};
+  state.zoningStorey = null; // 施工階を選んだところ（fillStoreys）で決まる
   undoStack.length = redoStack.length = 0; // 別のIFCの工区割には戻さない
   renderZoneLabels();
   state.selected.clear();

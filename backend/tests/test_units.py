@@ -161,3 +161,13 @@ def test_region_from_rings_keeps_holes():
     hole = [[1, 1], [3, 1], [3, 3], [1, 3], [1, 1]]
     assert region_from_rings([[outer, hole]]).area == pytest.approx(12.0)
     assert region_from_rings(None) is None
+
+
+def test_top_at_most_keeps_only_members_ending_at_or_below():
+    """top_at_most：上端がその高さ以下の立体だけを数える（コン天より上に続くパラペットを外す。D33）。"""
+    beam = box_solid((0, 0, 0.5), (2, 0.2, 1.0), key="beam", category="梁")      # コン天(1.0)で終わる
+    para = box_solid((0, 0.8, 0.5), (2, 1.0, 1.6), key="para", category="壁")   # コン天より上に続く
+    r = compute_units([beam, para], [PourUnit("帯", 0.8, 1.0, top_at_most=1.005)])
+    assert r.results[0].total == pytest.approx(2 * 0.2 * 0.2, rel=REL)  # 梁の分だけ
+    r = compute_units([beam, para], [PourUnit("帯", 0.8, 1.0)])
+    assert r.results[0].total == pytest.approx(2 * 0.2 * 0.2 * 2, rel=REL)  # 制限なしなら両方

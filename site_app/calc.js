@@ -39,18 +39,27 @@ export const aboveMm = (data) => Math.max(0, Math.round((data.z1 - conTop(data))
 // 打設中は、柱・梁をコン天から dMm 下まで打設済みとして、そこからコン天までの柱・梁とスラブの全厚が残る。
 // コン天より上（範囲の上端がSLより上のときの立ち上がりなど）は打設済みとして数えない（excludedAbove で別に出す）。
 // dMm が null（高さ未計測）のときは、少なく見積もらないよう柱・梁を全部（コン天より上も）残りに数える
+// コン天より上に続く部材（パラペット・逆梁など）は、上端から流し込むので、コン天から下（スラブの厚みなど）の部分も
+// その部材と一緒に打ち終わる。高さを入れた打設中のスパンでは、その部分も打設済みとして残りから外す（D33。rise_from_top）
+function riseBand(cell, dMm, data) {
+  if (!cell.rise_from_top) return 0;
+  const h = data.z1 - data.z0, off = aboveMm(data);
+  return interp(cell.rise_from_top, data.step, h, off + dMm) - interp(cell.rise_from_top, data.step, h, off);
+}
+
 export function remaining(cell, status, dMm, data) {
   if (status === 'done') return 0;
   if (status !== 'pouring' || dMm === null || dMm === undefined) return fullVolume(cell);
   const h = data.z1 - data.z0, off = aboveMm(data);
-  return interp(cell.from_top, data.step, h, off + dMm) - interp(cell.from_top, data.step, h, off) + cell.slab;
+  return interp(cell.from_top, data.step, h, off + dMm) - interp(cell.from_top, data.step, h, off)
+    - riseBand(cell, dMm, data) + cell.slab;
 }
 
-// 打設中で高さを入れたスパンの、コン天より上の柱・梁など（残りに含めない量）
+// 打設中で高さを入れたスパンの、残りに含めない量：コン天より上の部材と、コン天より上に続く部材のコン天から下の部分
 export function excludedAbove(cell, status, dMm, data) {
   if (status !== 'pouring' || dMm === null || dMm === undefined) return 0;
   const off = aboveMm(data);
-  return off ? interp(cell.from_top, data.step, data.z1 - data.z0, off) : 0;
+  return (off ? interp(cell.from_top, data.step, data.z1 - data.z0, off) : 0) + riseBand(cell, dMm, data);
 }
 
 // 全体の合計。予定はスパンの全量の合計（書き出し時に「いまの条件の数量」と一致を確認済み）、打設済みは予定−残り。

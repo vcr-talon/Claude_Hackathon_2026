@@ -86,6 +86,9 @@ input[type=number] { font: inherit; font-size: 20px; width: 110px; min-height: 4
   background: rgba(255,255,255,.92); border-radius: 8px; padding: 4px 8px; font-size: 14px; }
 .sw { display: inline-block; width: 16px; height: 16px; border: 1px solid #90a4ae; border-radius: 3px; vertical-align: -3px; margin-right: 4px; }
 .sw.todo { background: #fff; } .sw.pouring { background: var(--pour); } .sw.done { background: var(--done); }
+/* いまの図の描き方（等間隔のときは広さが実際と違うことを常に出す）。平面図の左上に重ね、指の操作は下の図に通す */
+.layoutnote { position: absolute; left: 8px; top: 8px; pointer-events: none; color: #455a64; font-size: 13px;
+  background: rgba(255,255,255,.9); border-radius: 6px; padding: 2px 8px; }
 
 /* 平面図の要素（線の太さは拡大しても一定） */
 .grid line { stroke: #90a4ae; stroke-dasharray: 6 4; vector-effect: non-scaling-stroke; }

@@ -32,6 +32,21 @@ class SiteCell:
     beam_mid_mm: float | None
     members: int
     uncomputed: list[Solid]
+    # コン天より上に続く部材（パラペット・逆梁など）だけの from_top（D33）。範囲の上端がコン天より上のときだけ。
+    # 打設中に高さを入れたスパンでは、これらの部材はコン天から下の部分も含めて打設済みとして残りから外す
+    rise_from_top: list[float] | None = None
+
+
+RISE_EPS = 0.005  # m。上端がコン天からこれ以上高い部材を「コン天より上に続く部材」とする
+RISE_EXCLUDED = {"柱"}  # 続く部材として扱わない種別（上の階までつながった柱はスラブと一緒に打つ）
+
+
+def _table(m: m3.Manifold | None, z1: float, steps: list[float]) -> list[float]:
+    """上端 z1 から各深さより上にある体積の表（単調増加にそろえる）。"""
+    t = [_volume_above(m, z1 - d) if d > 0 else 0.0 for d in steps]
+    for k in range(1, len(t)):  # 切断の誤差で前の値を下回らないように
+        t[k] = max(t[k], t[k - 1])
+    return t
 
 
 def depth_steps(z0: float, z1: float, step: float) -> list[float]:
@@ -132,13 +147,25 @@ def export_cell(solids: list[Solid], cell_id: str, label: str, ring: list[list[f
     if v is not None and s is not None:
         v = m3.Manifold.batch_boolean([v, s], m3.OpType.Subtract)
     steps = depth_steps(z0, z1, step)
-    from_top = [_volume_above(v, z1 - d) if d > 0 else 0.0 for d in steps]
-    for k in range(1, len(from_top)):  # 切断の誤差で前の値を下回らないように（単調増加）
-        from_top[k] = max(from_top[k], from_top[k - 1])
+    from_top = _table(v, z1, steps)
+    rise = None
+    if top is not None and z1 - top > 1e-6 and vertical:
+        # コン天より上に続く部材：上端がコン天より上にある立体（コン天ちょうどで終わる梁・柱は入れない）。
+        # 柱は入れない：上の階までつながった柱（斜めの柱など）のスラブ厚の部分は、スラブと一緒に打つため
+        risers = [x for x in solids if x.bbox[5] > top + RISE_EPS and x.category not in RISE_EXCLUDED]
+        rr = compute(risers, z0, z1, region=region, categories=vertical, materials=materials) if risers else None
+        r = rr.union if rr is not None else None
+        if r is not None and s is not None:
+            r = m3.Manifold.batch_boolean([r, s], m3.OpType.Subtract)
+        if r is not None:
+            # 全体の表を超えない。ファイルを軽くするため 1e-6 m³（1cm³）単位に丸める（許容値 0.001 m³ より十分細かい）
+            rise = [round(min(a, b), 6) for a, b in zip(_table(r, z1, steps), from_top)]
+            if rise[-1] <= EPS_VOLUME:
+                rise = None
     results = [r for r in (rv, rs) if r is not None]
     members = {m.member_id for r in results for m in r.members if m.volume > EPS_VOLUME}
     uncomputed = [x for r in results for x in r.uncomputed]
     return SiteCell(cell_id, label, ring, from_top, s.volume() if s is not None else 0.0,
                     _preset_mm(solids, region, z1, SLAB, materials, "slab", top),
                     _preset_mm(solids, region, z1, "梁", materials, "beam", top),
-                    len(members), uncomputed)
+                    len(members), uncomputed, rise)

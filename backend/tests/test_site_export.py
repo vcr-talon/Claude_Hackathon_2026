@@ -87,6 +87,37 @@ def test_presets_measured_from_con_top_when_range_goes_above_sl():
     assert old.slab_bottom_mm is None and old.beam_mid_mm is None
 
 
+def test_rise_table_only_members_continuing_above_con_top():
+    """D33：コン天（z=1）より上に続く部材（パラペット）だけの表。コン天で終わる梁・柱は入れない。"""
+    ring = [[0, 0], [2, 0], [2, 1], [0, 1], [0, 0]]
+    parapet = box_solid((1.8, 0, 0.5), (2, 1, 1.6), key="p", category="壁")  # 0.2×1、z 0.5〜1.6（コン天の上へ0.6）
+    solids = SOLIDS + [parapet]
+    c = export_cell(solids, "a", "a", ring, 0, 1.6, CATS | {"壁"}, None, 0.05, top=1.0)
+    assert c.rise_from_top is not None and len(c.rise_from_top) == len(c.from_top)
+    k6 = round(0.6 / 0.05)  # コン天（上端から0.6）
+    k8 = round(0.8 / 0.05)  # スラブ下（上端から0.8）
+    # コン天より上：パラペットだけ（0.2×1×0.6）。全体の表と同じ
+    assert c.rise_from_top[k6] == pytest.approx(0.2 * 1 * 0.6, rel=1e-6)
+    assert c.from_top[k6] == pytest.approx(c.rise_from_top[k6], rel=1e-6)
+    # コン天〜スラブ下：パラペットのスラブ厚の部分。スラブと重なる部分は除く（スラブ側で数えるので二重に引かない）
+    d = c.rise_from_top[k8] - c.rise_from_top[k6]
+    assert d == pytest.approx(0.0, abs=1e-9)  # この例ではパラペットのスラブ厚の部分はスラブと重なっている
+    assert all(r <= f + 1e-12 for r, f in zip(c.rise_from_top, c.from_top))
+    # 範囲の上端がコン天なら表は作らない
+    assert export_cell(solids, "a", "a", ring, 0, 1.0, CATS | {"壁"}, None, 0.05, top=1.0).rise_from_top is None
+
+
+def test_rise_table_counts_parapet_below_con_top_outside_slab():
+    """スラブの外側に立ち上がるパラペット：コン天〜スラブ下の部分も表に入る（打設済みとして外す分）。"""
+    ring = [[0, 0], [2.2, 0], [2.2, 1], [0, 1], [0, 0]]
+    parapet = box_solid((2, 0, 0.5), (2.2, 1, 1.6), key="p", category="壁")  # スラブ（x 0〜2）の外
+    c = export_cell(SOLIDS + [parapet], "a", "a", ring, 0, 1.6, CATS | {"壁"}, None, 0.05, top=1.0)
+    k6, k8 = round(0.6 / 0.05), round(0.8 / 0.05)
+    assert c.rise_from_top[k8] - c.rise_from_top[k6] == pytest.approx(0.2 * 1 * 0.2, rel=1e-6)
+    # 梁（コン天で終わる）のスラブ厚の部分は入らない
+    assert c.from_top[k8] - c.from_top[k6] > c.rise_from_top[k8] - c.rise_from_top[k6]
+
+
 def test_touches_ignores_members_only_sharing_an_edge():
     ring = Polygon([[0, 0], [1, 0], [1, 1], [0, 1]])
     assert touches(ring, 0.5, 0.2, 2.0, 0.4)  # 掛かる
@@ -102,3 +133,12 @@ def test_split_cells_by_zone_boundary():
     assert [(i, n) for i, n, _ in out] == [("0,0#A", "X1〜X2×Y1〜Y2（A）"), ("0,0#B", "X1〜X2×Y1〜Y2（東側）")]
     assert sum(Polygon(r).area for _, _, r in out) == pytest.approx(2.0)
     assert split_cells([("0,0", "s", [[0, 0], [1, 0], [1, 1], [0, 0]])], None)[0][0] == "0,0"
+
+
+def test_rise_table_leaves_out_columns_continuing_upward():
+    """上の階までつながった柱は、コン天より上に続いても外さない（スラブ厚の部分はスラブと一緒に打つ）。"""
+    ring = [[0, 0], [2.2, 0], [2.2, 1], [0, 1], [0, 0]]
+    col = box_solid((2, 0, 0), (2.2, 0.2, 3.0), key="col2", category="柱")  # スラブの外、上の階まで
+    c = export_cell(SOLIDS + [col], "a", "a", ring, 0, 1.6, CATS | {"壁"}, None, 0.05, top=1.0)
+    k6, k8 = round(0.6 / 0.05), round(0.8 / 0.05)
+    assert c.rise_from_top is None or c.rise_from_top[k8] - c.rise_from_top[k6] == pytest.approx(0.0, abs=1e-9)

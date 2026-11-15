@@ -40,11 +40,15 @@ class PourUnit:
     categories: set[str] | None = None
     member_ids: set[str] | None = None
     materials: set[str] | None = None  # 数える材料名（None はすべて）
+    # 上端がこの高さ以下の立体だけ（None は制限なし）。打設終盤の残量で、コン天より上に続く部材
+    # （パラペットなど）を外すのに使う（D33）
+    top_at_most: float | None = None
 
     def accepts(self, s: Solid) -> bool:
         return ((self.categories is None or s.category in self.categories)
                 and (self.member_ids is None or s.member_id in self.member_ids)
-                and (self.materials is None or s.material in self.materials))
+                and (self.materials is None or s.material in self.materials)
+                and (self.top_at_most is None or s.bbox[5] <= self.top_at_most))
 
 
 @dataclass
@@ -111,9 +115,10 @@ def intersect_units(u: PourUnit, v: PourUnit) -> PourUnit | None:
         region = u.region.intersection(v.region)
         if region.area <= 1e-9:
             return None
+    tops = [t for t in (u.top_at_most, v.top_at_most) if t is not None]
     return PourUnit(f"{u.name}∩{v.name}", z0, z1, region,
                     _common(u.categories, v.categories), _common(u.member_ids, v.member_ids),
-                    _common(u.materials, v.materials))
+                    _common(u.materials, v.materials), min(tops) if tops else None)
 
 
 class _Clipper:
@@ -207,7 +212,8 @@ def _shared(solids: list[Solid], a: Unit, b: Unit) -> tuple[float, list[MemberVo
         return 0.0, []
     members: dict[str, MemberVolume] = {}
     for c in commons:
-        r = compute(solids, c.z0, c.z1, region=c.region, categories=c.categories, member_ids=c.member_ids,
+        r = compute([s for s in solids if c.top_at_most is None or s.bbox[5] <= c.top_at_most],
+                    c.z0, c.z1, region=c.region, categories=c.categories, member_ids=c.member_ids,
                     materials=c.materials)
         for m in r.members:
             if m.member_id not in members or members[m.member_id].volume < m.volume:

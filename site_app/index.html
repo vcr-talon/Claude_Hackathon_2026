@@ -61,9 +61,11 @@
 
     <div id="planWrap" class="planwrap">
       <svg id="plan" class="plan" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet"></svg>
+      <div id="layoutNote" class="layoutnote">図は等間隔（広さは実際と違う）</div>
       <div class="legend">
         <span><i class="sw todo"></i>未打設</span><span><i class="sw pouring"></i>打設中</span><span><i class="sw done"></i>打設済み</span>
         <button id="fit" class="btn small">全体</button>
+        <button id="layout" class="btn small">実寸にする</button>
         <button id="bulk" class="btn small">打設済みをまとめて</button>
       </div>
     </div>
@@ -71,7 +73,7 @@
     <footer class="controls">
       <div class="taphint"><button id="hintMore" class="hintmore" aria-label="数字のないスパンについて">？</button>
         <span class="nowrap">タップ：打設中 → 打設済み → 未打設</span>　<span class="nowrap">長押し：高さを個別に変える</span>
-        <div id="thinNote" class="small muted hidden">数字のない細いスパン（幅2m未満）も、量は合計に入っています</div></div>
+        <div id="thinNote" class="small muted hidden">数字のない細いスパンも、量は合計に入っています。<br>等間隔の図は、通り芯の間をそろえて見やすくした表示です。広さは実際と違うので、多い・少ないはマスの数字で見てください</div></div>
       <div class="depthhead" id="depthLabel">柱・梁の打設済み高さ</div>
       <div class="row">
         <label for="depth">コン天から</label>

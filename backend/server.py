@@ -14,6 +14,7 @@ import webbrowser
 from datetime import datetime
 from pathlib import Path
 
+import manifold3d as m3
 import numpy as np
 import uvicorn
 from fastapi import FastAPI, HTTPException, UploadFile
@@ -24,7 +25,7 @@ from shapely.ops import unary_union
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from qto.geometry import CATEGORY_ORDER, Result, compute  # noqa: E402
+from qto.geometry import CATEGORY_ORDER, EPS_VOLUME, Result, compute  # noqa: E402
 from qto.ifc_loader import Model, load_model  # noqa: E402
 from qto.partition import ZoneSeed, assign_zones, split_regions  # noqa: E402
 from qto.site_export import con_top, export_cell, split_cells  # noqa: E402
@@ -125,12 +126,13 @@ class PartRequest(BaseModel):
     categories: list[str] | None = None
     member_ids: list[str] | None = None
     materials: list[str] | None = None  # 省略時はコンクリートの材料（この機能より前に保存した区分もこの扱い）
+    top_at_most: float | None = None  # 上端がこの高さ以下の立体だけ（打設終盤の残量で、コン天より上に続く部材を外す）
 
     def to_part(self, model: Model, name: str = "") -> PourUnit:
         return PourUnit(name, min(self.z0, self.z1), max(self.z0, self.z1), region_from_rings(self.polygons),
                         set(self.categories) if self.categories is not None else None,
                         set(self.member_ids) if self.member_ids is not None else None,
-                        _materials(model, self.materials))
+                        _materials(model, self.materials), self.top_at_most)
 
 
 def _materials(model: Model, names: list[str] | None) -> set[str]:
@@ -162,6 +164,44 @@ def _mesh_json(pieces: list) -> dict | None:
     return {"pos": _b64(np.vstack(verts), np.float32), "idx": _b64(np.vstack(tris), np.uint32)}
 
 
+SLIVER_VOLUME = 1e-6  # m3（1cm角）。表示用に分けた部分のうち、これ未満の離れたかけらは描かない（数量には関係しない）
+
+
+def _excluded_by_part(model: Model, parts: list[PourUnit], pieces: list) -> list[dict]:
+    """差し引いた部分（計算エンジンの結果）を、どの条件に入っていたかで分けた表示用メッシュ。
+
+    画面で、打設リストの区分ごとに色を変えて見せるためだけに使う（数量には使わない）。
+    条件ごとに「その条件が差し引く形」（立体と条件の切り取り型の共通部分）を作り、差し引いた部分と重ねて分ける。
+    複数の条件に入る部分は、先に登録した条件の側に入れる（数量の差し引きと同じ優先順位）。
+    """
+    if not pieces or not parts:
+        return []
+    shown_all = m3.Manifold.batch_boolean(pieces, m3.OpType.Add)
+    xmin, ymin, zmin = shown_all.bounding_box()[:3]
+    xmax, ymax, zmax = shown_all.bounding_box()[3:]
+    near = [s for s in model.solids if s.manifold is not None
+            and s.bbox[0] <= xmax and s.bbox[3] >= xmin and s.bbox[1] <= ymax and s.bbox[4] >= ymin
+            and s.bbox[2] <= zmax and s.bbox[5] >= zmin]
+    out, earlier = [], None
+    for k, part in enumerate(parts):
+        clip = make_excluder([part])
+        cuts = [m3.Manifold.batch_boolean([s.manifold, c], m3.OpType.Intersect)
+                for s in near if (c := clip(s)) is not None]
+        if not cuts:
+            continue
+        reach = m3.Manifold.batch_boolean(cuts, m3.OpType.Add)
+        piece = m3.Manifold.batch_boolean([shown_all, reach], m3.OpType.Intersect)
+        if earlier is not None:
+            piece = m3.Manifold.batch_boolean([piece, earlier], m3.OpType.Subtract)
+        earlier = reach if earlier is None else m3.Manifold.batch_boolean([earlier, reach], m3.OpType.Add)
+        # 先の区分を差し引いた境目に残る、厚みのほとんどない離れたかけらは描かない（面が重なって色が混ざって見えるため）
+        keep = [c for c in piece.decompose() if c.volume() > SLIVER_VOLUME]
+        piece = m3.Manifold.compose(keep) if keep else m3.Manifold()
+        if piece.volume() > EPS_VOLUME:
+            out.append({"part": k, "volume": piece.volume(), "mesh": _mesh_json([piece])})
+    return out
+
+
 def _result_json(r: Result, label: str, region) -> dict:
     return {
         "label": label,
@@ -190,7 +230,8 @@ def api_compute(req: ComputeRequest):
     cats = set(req.categories) if req.categories is not None else None
     ids = set(req.member_ids) if req.member_ids is not None else None
     mats = _materials(model, req.materials)
-    exclude = make_excluder([p.to_part(model) for p in req.exclude_parts])
+    exclude_parts = [p.to_part(model) for p in req.exclude_parts]
+    exclude = make_excluder(exclude_parts)
 
     zones: dict = {}
     if regions is not None and req.seeds:
@@ -209,7 +250,14 @@ def api_compute(req: ComputeRequest):
         "zones": results,
         "regions": [_rings(r) for r in regions] if regions is not None else [],
         "excluded_mesh": _mesh_json(excluded_pieces),
-        "hidden_keys": fully_excluded_keys(model.solids, min(req.z0, req.z1), max(req.z0, req.z1), exclude)
+        # 上と同じ部分を、exclude_parts の何番目の条件に入っていたかで分けたもの（区分ごとに色を変えて見せる）
+        "excluded_by_part": _excluded_by_part(model, exclude_parts, excluded_pieces),
+        # 元の形を隠す立体は、今の計算に入る立体（種別・選んだ部材・材料の絞り込み）だけ。
+        # 入れ済みの部分は今の計算に入る立体の分しか描かないので、絞り込みの外の立体まで隠すと画面から消えてしまう
+        "hidden_keys": fully_excluded_keys(
+            [s for s in model.solids if (cats is None or s.category in cats)
+             and (ids is None or s.member_id in ids) and s.material in mats],
+            min(req.z0, req.z1), max(req.z0, req.z1), exclude)
         if excluded_pieces else [],
     }
 
@@ -316,7 +364,9 @@ def api_export_site(req: ExportSiteRequest):
                   for c in cells for u in c.uncomputed}
     out = {
         "cells": [{"id": c.id, "label": c.label, "ring": c.ring, "from_top": c.from_top, "slab": c.slab,
-                   "slab_bottom_mm": c.slab_bottom_mm, "beam_mid_mm": c.beam_mid_mm, "members": c.members}
+                   "slab_bottom_mm": c.slab_bottom_mm, "beam_mid_mm": c.beam_mid_mm, "members": c.members,
+                   # コン天より上に続く部材（パラペットなど）の表。あるスパンだけ（D33）
+                   **({"rise_from_top": c.rise_from_top} if c.rise_from_top else {})}
                   for c in cells],
         "uncomputed": list(uncomputed.values()),
     }

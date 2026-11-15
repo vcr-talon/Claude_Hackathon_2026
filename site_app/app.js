@@ -2,8 +2,9 @@
 import { aboveMm, conTop, fmt, fullVolume, parseSiteData, presetMm, totals, remaining, truckPlan } from './calc.js';
 import { STATUS_NAME, recordCsv, stamp, zoneKeyOf, zoneTitle } from './record.js';
 import { clearData, loadData, saveData } from './datastore.js';
+import { equalLayout, realLayout } from './layout.js';
 
-const APP_VERSION = '1.6.2'; // sw.js の VERSION と合わせる（キャッシュで古い版が動いていないか確かめる用）
+const APP_VERSION = '1.7.0'; // sw.js の VERSION と合わせる（キャッシュで古い版が動いていないか確かめる用）
 const $ = (id) => document.getElementById(id);
 const SVGNS = 'http://www.w3.org/2000/svg';
 const CAT_COLORS = { 柱: '#c62828', 梁: '#ef6c00', 壁: '#0288d1', スラブ: '#a0a4a8', 基礎: '#6d4c41', 階段: '#6a1b9a', その他: '#546e7a' };
@@ -14,12 +15,14 @@ const TAP_SLOP = 10; // px。指を離したときの移動がこれ未満なら
 const LONG_PRESS_MS = 550; // これだけ押し続けると長押し（そのスパンだけの打ち上がりを入れる）
 const STORE = 'site.work.'; // localStorage：スパンの状態と履歴（データファイル本体は datastore.js で IndexedDB に残す）
 const LAST = 'site.last';
+const LAYOUT = 'site.layout'; // 平面図の描き方（'equal'：等間隔、'real'：実寸）。端末ごとに覚える
 const UNDO_MAX = 200;
 
 let data = null; // 開いたデータファイル
 let key = '';
 let work = null; // { statuses, depth, cellDepth, truck, extra, undo, updated }
-let cellEls = new Map(); // id → { path, text, cell }
+let cellEls = new Map(); // id → { path, text, cell, ring（描いている輪郭）, thin }
+let geo = null; // 描くための座標（等間隔なら通り芯の間をそろえたもの）。数量の計算には使わない
 let home = null; // 全体表示の viewBox
 let vb = null; // いまの viewBox [x, y, w, h]（y は上下反転した座標）
 let zones = []; // 工区で切ったデータのとき [{key, name}]。切り替えたときは選んだ工区だけを数え、他の工区は選べない
@@ -199,10 +202,19 @@ function clipToFrame([sx, sy], [ex, ey], [fx0, fy0, fx1, fy1]) {
   return [[sx + dx * t0, sy + dy * t0], [sx + dx * t1, sy + dy * t1]];
 }
 
+const equalSpacing = () => load(LAYOUT) !== 'real'; // 最初は等間隔
+function updateLayoutButton() {
+  const equal = equalSpacing();
+  $('layout').textContent = equal ? '実寸にする' : '等間隔にする';
+  $('layoutNote').textContent = equal ? '図は等間隔（広さは実際と違う）' : '図は実寸';
+}
+
 function buildPlan() {
   const svg = $('plan');
   svg.replaceChildren();
-  const [x0, y0, x1, y1] = data.bounds;
+  geo = equalSpacing() ? equalLayout(data) : realLayout(data);
+  updateLayoutButton();
+  const [x0, y0, x1, y1] = geo.bounds;
   const size = Math.max(x1 - x0, y1 - y0), m = size * 0.02 + 1;
   // 通り芯は建物のすぐ外までで切り、丸印（X1 などの記号）をそこに置く。全体表示は丸印まで入る範囲にする
   const r = size * 0.012, pad = size * 0.03;
@@ -217,7 +229,7 @@ function buildPlan() {
     placed.push([px, py]);
     return [px, py];
   };
-  for (const g of data.grids ?? []) {
+  for (const g of geo.grids) {
     const seg = clipToFrame(g.start, g.end, frame);
     if (!seg) continue;
     const [[sx, sy], [ex, ey]] = seg, len = Math.hypot(ex - sx, ey - sy) || 1;
@@ -236,7 +248,7 @@ function buildPlan() {
 
   // 部材の位置（外接矩形）を種別ごとに1本のパスで薄く描く
   const byCat = {};
-  for (const f of data.footprints ?? []) {
+  for (const f of geo.footprints) {
     const [a, b, c, d] = f.box;
     (byCat[f.category] ??= []).push(`M${a.toFixed(3)} ${(-d).toFixed(3)}h${(c - a).toFixed(3)}v${(d - b).toFixed(3)}h${(a - c).toFixed(3)}Z`);
   }
@@ -250,17 +262,19 @@ function buildPlan() {
   cellEls = new Map();
   for (const c of data.cells) {
     const empty = fullVolume(c) < EMPTY;
-    const path = el('path', { d: ringPath(c.ring), class: `cell ${empty ? 'empty' : 'todo'}`, 'data-id': c.id });
+    const ring = geo.rings.get(c.id);
+    const path = el('path', { d: ringPath(ring), class: `cell ${empty ? 'empty' : 'todo'}`, 'data-id': c.id });
     cellsG.appendChild(path);
     if (empty) continue;
-    const xs = c.ring.map((p) => p[0]), ys = c.ring.map((p) => p[1]);
+    const xs = ring.map((p) => p[0]), ys = ring.map((p) => p[1]);
     const short = Math.min(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys));
     const fs = Math.min(Math.max(short * 0.28, size * 0.006), size * 0.02);
-    const [cx, cy] = centroid(c.ring);
+    const [cx, cy] = centroid(ring);
     const text = el('text', { x: cx.toFixed(3), y: (-cy).toFixed(3), class: 'cellnum', 'font-size': fs.toFixed(3) });
     nums.appendChild(text);
-    // 細いスパン（通り芯が近い間・建物の端の帯）は小さな数字が並んで読めないので出さない（色と数量の合計はそのまま）
-    cellEls.set(c.id, { path, text, cell: c, thin: short < THIN_SPAN });
+    // 細いスパン（通り芯が近い間・建物の端の帯）は小さな数字が並んで読めないので出さない（色と数量の合計はそのまま）。
+    // 等間隔のときは、通り芯の間の平均の幅で測る（ふつうのスパンは数字が出る）
+    cellEls.set(c.id, { path, text, cell: c, ring, thin: short < THIN_SPAN });
   }
 
   // 通り芯と記号
@@ -278,7 +292,7 @@ function buildPlan() {
   // 工区割の境界線（PCアプリと同じ赤）。両端の区間をモデルの外まで延ばす
   const lines = el('g');
   const reach = Math.hypot(x1 - x0, y1 - y0);
-  for (const pts of data.boundaries ?? []) {
+  for (const pts of geo.boundaries) {
     if (pts.length < 2) continue;
     const out = ([fx, fy], [tx, ty]) => {
       const l = Math.hypot(tx - fx, ty - fy) || 1;
@@ -321,9 +335,9 @@ function setBulk(on) {
 const narrow = () => window.matchMedia('(max-width: 600px), (orientation: landscape) and (max-height: 500px)').matches;
 function zoneView() {
   const xs = [], ys = [];
-  for (const { cell } of cellEls.values()) {
+  for (const { cell, ring } of cellEls.values()) {
     if (!inZone(cell)) continue;
-    for (const [x, y] of cell.ring) { xs.push(x); ys.push(y); }
+    for (const [x, y] of ring) { xs.push(x); ys.push(y); }
   }
   if (!xs.length) return home;
   const x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
@@ -374,7 +388,7 @@ function render() {
   const topName = (data.storeys ?? []).find((s) => Math.abs(s.elevation - conTop(data)) < 0.005)?.name;
   // 範囲の上端がSLより上のとき：高さを入れた打設中のスパンは、コン天より上を打設済みとして残りに含めない。その量を知らせる
   const above = aboveMm(data) > 0 && t.excluded >= 0.005;
-  $('aboveNote').textContent = above ? `${topName ?? 'コン天'}より上の部材 ${fmt(t.excluded)} m³ は含まれません（打設済みとして扱います）` : '';
+  $('aboveNote').textContent = above ? `${topName ?? 'コン天'}より上に立ち上がる部材（パラペットなど）${fmt(t.excluded)} m³ は含まれません（打設済みとして扱います）` : '';
   $('aboveNote').classList.toggle('hidden', !above);
   $('undo').disabled = !work.undo.length;
   const edit = editId && cellEls.get(editId)?.cell;
@@ -454,7 +468,7 @@ function toWorld(px, py, v = vb) {
 
 function cellAtScreen(px, py) {
   const w = toWorld(px, py);
-  for (const [id, { cell }] of cellEls) if (inZone(cell) && pointInRing(w.x, -w.y, cell.ring)) return id;
+  for (const [id, { cell, ring }] of cellEls) if (inZone(cell) && pointInRing(w.x, -w.y, ring)) return id;
   return null;
 }
 
@@ -712,6 +726,16 @@ svg.addEventListener('pointerup', onUp);
 svg.addEventListener('pointercancel', onUp);
 svg.addEventListener('wheel', (e) => { e.preventDefault(); zoomAt(e.clientX, e.clientY, e.deltaY > 0 ? 1.15 : 1 / 1.15); }, { passive: false }); // PCで試すとき用
 $('fit').addEventListener('click', () => setViewBox(home));
+// 等間隔 ⇔ 実寸。描き方だけを変える（スパンの状態・数量はそのまま）
+$('layout').addEventListener('click', () => {
+  const equal = !equalSpacing();
+  store(LAYOUT, equal ? 'equal' : 'real');
+  buildPlan();
+  fitZoneOnPhone();
+  updateCells();
+  render();
+  toast(equal ? '通り芯の間をそろえて表示します。広さは実際と違いますが、数量は同じです' : '実際の広さのまま表示します');
+});
 $('undo').addEventListener('click', undo);
 $('bulk').addEventListener('click', () => {
   setBulk(!bulk);
