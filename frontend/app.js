@@ -1779,7 +1779,8 @@ function renderUnits() {
     if (!grp) groups.push(grp = { ...g, idx: [] });
     grp.idx.push(i);
   });
-  groups.sort((a, b) => a.order - b.order);
+  // 新しく入れた階を上に：一番新しい区分を含む階を一番上にする。階の中は確定した順（入れた順）のまま
+  groups.sort((a, b) => Math.max(...b.idx) - Math.max(...a.idx));
   $('unitList').innerHTML = groups.map((g) => {
     const open = groupOpen(g.key);
     const total = g.idx.every((i) => ur?.units[i]) ? `${fmt(g.idx.reduce((a, i) => a + ur.units[i].total, 0))} m³` : '計算中…';
