@@ -4,7 +4,7 @@ import { STATUS_NAME, recordCsv, stamp, zoneKeyOf, zoneTitle } from './record.js
 import { clearData, loadData, saveData } from './datastore.js';
 import { equalLayout, realLayout } from './layout.js';
 
-const APP_VERSION = '1.7.0'; // sw.js の VERSION と合わせる（キャッシュで古い版が動いていないか確かめる用）
+const APP_VERSION = '1.8.0'; // sw.js の VERSION と合わせる（キャッシュで古い版が動いていないか確かめる用）
 const $ = (id) => document.getElementById(id);
 const SVGNS = 'http://www.w3.org/2000/svg';
 const CAT_COLORS = { 柱: '#c62828', 梁: '#ef6c00', 壁: '#0288d1', スラブ: '#a0a4a8', 基礎: '#6d4c41', 階段: '#6a1b9a', その他: '#546e7a' };

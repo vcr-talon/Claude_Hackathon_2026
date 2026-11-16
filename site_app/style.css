@@ -39,6 +39,7 @@ input[type=number] { font: inherit; font-size: 20px; width: 110px; min-height: 4
 /* 最初の画面 */
 .start { max-width: 640px; margin: 0 auto; padding: 48px 20px; text-align: center; }
 .start h1 { font-size: 30px; margin: 0 0 8px; }
+.start h1.brand { display: flex; align-items: center; justify-content: center; gap: 12px; } /* ロゴ（B1）＋アプリ名 */
 .lead { color: var(--muted); margin: 0 0 32px; }
 .note { margin-top: 16px; }
 .resume { margin-bottom: 20px; }

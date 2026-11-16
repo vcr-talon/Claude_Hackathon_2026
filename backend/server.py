@@ -40,7 +40,7 @@ DEFAULT_IFC = ROOT / "hackathon_model.ifc"
 HOST = "127.0.0.1"
 PORT = int(os.environ.get("QTO_PORT") or os.environ.get("PORT") or 8765)
 
-app = FastAPI(title="IFCコンクリート数量算出")
+app = FastAPI(title="KONTENT")
 state: dict[str, Model | None] = {"model": None}
 
 
@@ -167,36 +167,39 @@ def _mesh_json(pieces: list) -> dict | None:
 SLIVER_VOLUME = 1e-6  # m3（1cm角）。表示用に分けた部分のうち、これ未満の離れたかけらは描かない（数量には関係しない）
 
 
-def _excluded_by_part(model: Model, parts: list[PourUnit], pieces: list) -> list[dict]:
+def _excluded_by_part(parts: list[PourUnit], pieces: list, owners: list) -> list[dict]:
     """差し引いた部分（計算エンジンの結果）を、どの条件に入っていたかで分けた表示用メッシュ。
 
     画面で、打設リストの区分ごとに色を変えて見せるためだけに使う（数量には使わない）。
-    条件ごとに「その条件が差し引く形」（立体と条件の切り取り型の共通部分）を作り、差し引いた部分と重ねて分ける。
+    部材ごとの差し引いた片（owners はその元の立体）を、先に登録した条件から順にその条件の切り取り型で切る。
     複数の条件に入る部分は、先に登録した条件の側に入れる（数量の差し引きと同じ優先順位）。
+    片は部材ごとに小さいので、打設リストが長くても速い（以前は全体を合わせた大きな形どうしで切っていた）。
     """
     if not pieces or not parts:
         return []
-    shown_all = m3.Manifold.batch_boolean(pieces, m3.OpType.Add)
-    xmin, ymin, zmin = shown_all.bounding_box()[:3]
-    xmax, ymax, zmax = shown_all.bounding_box()[3:]
-    near = [s for s in model.solids if s.manifold is not None
-            and s.bbox[0] <= xmax and s.bbox[3] >= xmin and s.bbox[1] <= ymax and s.bbox[4] >= ymin
-            and s.bbox[2] <= zmax and s.bbox[5] >= zmin]
-    out, earlier = [], None
-    for k, part in enumerate(parts):
-        clip = make_excluder([part])
-        cuts = [m3.Manifold.batch_boolean([s.manifold, c], m3.OpType.Intersect)
-                for s in near if (c := clip(s)) is not None]
-        if not cuts:
+    clips = [make_excluder([p]) for p in parts]
+    by_part: list[list] = [[] for _ in parts]
+    for piece, solid in zip(pieces, owners):
+        rest = piece
+        for k, clip in enumerate(clips):
+            c = clip(solid)
+            if c is None:
+                continue
+            got = m3.Manifold.batch_boolean([rest, c], m3.OpType.Intersect)
+            if got.volume() > EPS_VOLUME:
+                by_part[k].append(got)
+            rest = m3.Manifold.batch_boolean([rest, c], m3.OpType.Subtract)
+            if rest.volume() <= EPS_VOLUME:
+                break
+    out = []
+    for k, group in enumerate(by_part):
+        if not group:
             continue
-        reach = m3.Manifold.batch_boolean(cuts, m3.OpType.Add)
-        piece = m3.Manifold.batch_boolean([shown_all, reach], m3.OpType.Intersect)
-        if earlier is not None:
-            piece = m3.Manifold.batch_boolean([piece, earlier], m3.OpType.Subtract)
-        earlier = reach if earlier is None else m3.Manifold.batch_boolean([earlier, reach], m3.OpType.Add)
         # 先の区分を差し引いた境目に残る、厚みのほとんどない離れたかけらは描かない（面が重なって色が混ざって見えるため）
-        keep = [c for c in piece.decompose() if c.volume() > SLIVER_VOLUME]
-        piece = m3.Manifold.compose(keep) if keep else m3.Manifold()
+        keep = [c for c in m3.Manifold.batch_boolean(group, m3.OpType.Add).decompose() if c.volume() > SLIVER_VOLUME]
+        if not keep:
+            continue
+        piece = m3.Manifold.compose(keep)
         if piece.volume() > EPS_VOLUME:
             out.append({"part": k, "volume": piece.volume(), "mesh": _mesh_json([piece])})
     return out
@@ -238,12 +241,13 @@ def api_compute(req: ComputeRequest):
         zones = assign_zones(regions, [ZoneSeed(s.label, s.x, s.y) for s in req.seeds])
     if not zones:
         zones = {"範囲全体": None}
-    results, excluded_pieces = [], []
+    results, excluded_pieces, excluded_owners = [], [], []
     for label, poly in sorted(zones.items()):
         r = compute(model.solids, req.z0, req.z1, region=poly, categories=cats, member_ids=ids, exclude=exclude,
                     materials=mats)
         results.append(_result_json(r, label, poly))
         excluded_pieces += r.excluded_pieces
+        excluded_owners += r.excluded_solids
     return {
         "z0": min(req.z0, req.z1),
         "z1": max(req.z0, req.z1),
@@ -251,7 +255,7 @@ def api_compute(req: ComputeRequest):
         "regions": [_rings(r) for r in regions] if regions is not None else [],
         "excluded_mesh": _mesh_json(excluded_pieces),
         # 上と同じ部分を、exclude_parts の何番目の条件に入っていたかで分けたもの（区分ごとに色を変えて見せる）
-        "excluded_by_part": _excluded_by_part(model, exclude_parts, excluded_pieces),
+        "excluded_by_part": _excluded_by_part(exclude_parts, excluded_pieces, excluded_owners),
         # 元の形を隠す立体は、今の計算に入る立体（種別・選んだ部材・材料の絞り込み）だけ。
         # 入れ済みの部分は今の計算に入る立体の分しか描かないので、絞り込みの外の立体まで隠すと画面から消えてしまう
         "hidden_keys": fully_excluded_keys(
@@ -332,6 +336,11 @@ class ExportSiteRequest(BaseModel):
     truck_m3: float = 4.25
     extra_pct: float = 0.0
     boundaries: list[list[tuple[float, float]]] = []  # 工区割の境界線（平面図に赤で描く）
+    # 先に打設リストに入れた区分の条件（重なる部分を除いて書き出す。/api/compute と同じ形。D35）
+    exclude_parts: list[PartRequest] = []
+
+
+EXCLUDED_NOTE = "先に入れた区分と重なる部分は除いています"
 
 
 def _site_cells(cells: list[SiteCellRequest], zones: list[SiteZone] | None):
@@ -358,7 +367,8 @@ def api_export_site(req: ExportSiteRequest):
     cats = set(req.categories) if req.categories is not None else {s.category for s in model.solids}
     mats = _materials(model, req.materials)
     top = con_top(z0, z1, [s.elevation for s in model.storeys])
-    cells = [export_cell(model.solids, cid, label, ring, z0, z1, cats, mats, req.step, top)
+    exclude = make_excluder([p.to_part(model) for p in req.exclude_parts])
+    cells = [export_cell(model.solids, cid, label, ring, z0, z1, cats, mats, req.step, top, exclude)
              for cid, label, ring in _site_cells(req.cells, req.zones)]
     uncomputed = {u.key: {"name": u.member_name, "category": u.category, "reason": u.reason}
                   for c in cells for u in c.uncomputed}
@@ -373,14 +383,16 @@ def api_export_site(req: ExportSiteRequest):
     if not req.header:
         return out
     region = unary_union([region_from_rings(z.polygons) for z in req.zones]) if req.zones else None
-    total = compute(model.solids, z0, z1, region=region, categories=cats, materials=mats).total
+    whole = compute(model.solids, z0, z1, region=region, categories=cats, materials=mats, exclude=exclude)
+    total = whole.total
+    conditions = req.conditions + ([EXCLUDED_NOTE] if whole.excluded > EPS_VOLUME else [])
     footprints = [{"category": s.category, "box": [round(v, 3) for v in (s.bbox[0], s.bbox[1], s.bbox[3], s.bbox[4])]}
                   for s in model.solids
                   if s.category in cats and s.material in mats and s.bbox[5] > z0 and s.bbox[2] < z1]
     return {
         "format": "ifc-concrete-qto/site", "version": 1,
         "exported_at": datetime.now().astimezone().isoformat(timespec="seconds"),
-        "source": Path(model.source).name, "title": req.title, "conditions": req.conditions,
+        "source": Path(model.source).name, "title": req.title, "conditions": conditions,
         "z0": z0, "z1": z1, "con_top": top, "step": req.step, "total": total,
         "overlap_note": total - sum(c.from_top[-1] + c.slab for c in cells),  # 全スパンを1回で送ったときの値
         "truck_m3": req.truck_m3, "extra_pct": req.extra_pct,

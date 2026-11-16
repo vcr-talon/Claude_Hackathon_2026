@@ -142,3 +142,44 @@ def test_rise_table_leaves_out_columns_continuing_upward():
     c = export_cell(SOLIDS + [col], "a", "a", ring, 0, 1.6, CATS | {"壁"}, None, 0.05, top=1.0)
     k6, k8 = round(0.6 / 0.05), round(0.8 / 0.05)
     assert c.rise_from_top is None or c.rise_from_top[k8] - c.rise_from_top[k6] == pytest.approx(0.0, abs=1e-9)
+
+
+def test_export_cell_excludes_earlier_units():
+    """D35：先に入れた区分の条件（スパン a 側の x<1 の全部材）と重なる部分を、柱・梁・スラブのすべてから除く。"""
+    from qto.units import make_excluder
+    earlier = PourUnit("先", 0, 1, Polygon([[-5, -5], [0.75, -5], [0.75, 5], [-5, 5]]))
+    exclude = make_excluder([earlier])
+    full = [export_cell(SOLIDS, cid, cid, ring, 0, 1, CATS, None, 0.05) for cid, ring in CELLS]
+    cut = [export_cell(SOLIDS, cid, cid, ring, 0, 1, CATS, None, 0.05, exclude=exclude) for cid, ring in CELLS]
+    # 除いた残り＝打設リストで後に入れた区分の数量（全体 − 先の区分）
+    later = compute_units(SOLIDS, [Unit("先", [earlier]), Unit("後", [PourUnit("後", 0, 1)])],
+                          exclude_registered=True).results[1].total
+    assert sum(c.from_top[-1] + c.slab for c in cut) == pytest.approx(later, abs=1e-6)
+    assert sum(c.from_top[-1] + c.slab for c in full) > later + 0.1
+    # x>1 のスパン b には先の区分が掛からないので変わらない
+    assert cut[1].from_top == pytest.approx(full[1].from_top) and cut[1].slab == pytest.approx(full[1].slab)
+    assert cut[0].slab == pytest.approx(0.25 * 1 * 0.2, rel=1e-6)  # スラブも x 0.75〜1 だけ残る
+
+
+def test_api_export_site_exclude_parts():
+    """POST /api/export_site の exclude_parts：先の区分と重なる部分を total とスパンから除き、conditions に一言足す。"""
+    from types import SimpleNamespace
+    from fastapi.testclient import TestClient
+    import server
+    model = SimpleNamespace(solids=SOLIDS, storeys=[SimpleNamespace(name="1SL", elevation=1.0)], grids=[],
+                            bounds=[0, 0, 2, 1], source="t.ifc", default_materials={"コンクリート"})
+    old, server.state["model"] = server.state["model"], model
+    try:
+        c = TestClient(server.app)
+        body = {"cells": [{"id": cid, "label": cid, "ring": ring} for cid, ring in CELLS], "z0": 0, "z1": 1,
+                "categories": sorted(CATS), "conditions": ["高さ範囲：t"]}
+        full = c.post("/api/export_site", json=body).json()
+        part = {"z0": 0, "z1": 1, "polygons": [[[[-5, -5], [0.75, -5], [0.75, 5], [-5, 5], [-5, -5]]]]}
+        cut = c.post("/api/export_site", json={**body, "exclude_parts": [part]}).json()
+    finally:
+        server.state["model"] = old
+    removed = compute(SOLIDS, 0, 1, region=Polygon(part["polygons"][0][0])).total
+    assert cut["total"] == pytest.approx(full["total"] - removed, abs=1e-6)
+    assert sum(x["from_top"][-1] + x["slab"] for x in cut["cells"]) == pytest.approx(cut["total"], abs=1e-6)
+    assert full["conditions"] == ["高さ範囲：t"]
+    assert cut["conditions"] == ["高さ範囲：t", server.EXCLUDED_NOTE]

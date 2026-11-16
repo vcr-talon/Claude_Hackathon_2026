@@ -36,6 +36,7 @@ aside { background: var(--panel); overflow-y: auto; padding: 12px 14px; }
 .units li.flash { animation: flash 1.2s ease-out; }
 @keyframes flash { 0% { background: #ffeb3b; } 100% { background: inherit; } }
 h1 { font-size: 18px; margin: 0 0 4px; }
+h1.brand { display: flex; align-items: center; gap: 8px; letter-spacing: 0.08em; } /* ロゴ（B1）＋アプリ名 */
 h2 { font-size: 15px; margin: 0 0 8px; }
 section { border-top: 1px solid var(--line); padding: 12px 0; }
 header { padding-bottom: 10px; }
@@ -160,12 +161,17 @@ table.mini td.num { text-align: right; font-variant-numeric: tabular-nums; }
 .units button.link:hover { text-decoration: underline; }
 .units li.overlap { background: #fff8e1; border-color: #f9a825; }
 .units .unitrow { display: flex; align-items: center; gap: 6px; }
+.units .sub { display: flex; align-items: center; flex-wrap: wrap; gap: 0 4px; }
+.units .sub button.site { margin-left: auto; padding: 1px 8px; font-size: 12px; }
+.units .sub button.site.off { opacity: 0.45; cursor: not-allowed; } /* 書き出せない区分（押すと理由を出す） */
 .units input.name { flex: 1; min-width: 0; padding: 3px 4px; border: 1px solid var(--line); border-radius: 4px; }
 .units .num { font-weight: bold; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .unitsum { background: #eef2f7; border-radius: 8px; padding: 8px 10px; font-size: 13px; }
 .unitsum .num { float: right; font-weight: bold; font-variant-numeric: tabular-nums; }
 .overlapbox { background: #fff8e1; border: 1px solid #f9a825; border-radius: 8px; padding: 8px 10px; margin-top: 6px; font-size: 12px; }
 .overlapbox b { color: #e65100; }
+.overlapbox button.overlappair { background: none; border: 0; padding: 0; font-size: 12px; text-align: left; cursor: pointer; }
+.overlapbox button.overlappair:hover { text-decoration: underline; }
 details summary { cursor: pointer; font-size: 13px; padding: 8px 0; border-top: 1px solid var(--line); }
 .depthhead { font-weight: bold; margin: 8px 0 0; }
 .row.nowrap { white-space: nowrap; }

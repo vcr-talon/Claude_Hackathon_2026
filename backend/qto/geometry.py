@@ -252,6 +252,7 @@ class Result:
     union: m3.Manifold | None = field(default=None, repr=False)
     excluded: float = 0.0  # 登録済みの区分と重なるため差し引いた体積
     excluded_pieces: list[m3.Manifold] = field(default_factory=list, repr=False)
+    excluded_solids: list[Solid] = field(default_factory=list, repr=False)  # excluded_pieces の各片の元の立体（表示の色分け用）
 
     @property
     def overlap(self) -> float:
@@ -304,6 +305,7 @@ def compute(solids: list[Solid], z0: float, z1: float, region: BaseGeometry | No
     uncomputed: list[Uncomputed] = []
     pieces: list[tuple[Solid, m3.Manifold, float]] = []
     excluded_pieces: list[m3.Manifold] = []
+    excluded_solids: list[Solid] = []
     for s in candidates:
         if s.manifold is None:
             uncomputed.append(Uncomputed(s.member_id, s.member_name, s.category, s.key,
@@ -319,6 +321,7 @@ def compute(solids: list[Solid], z0: float, z1: float, region: BaseGeometry | No
             removed = m3.Manifold.batch_boolean([piece, cut], m3.OpType.Intersect)
             if removed.volume() > EPS_VOLUME:
                 excluded_pieces.append(removed)
+                excluded_solids.append(s)
                 piece = m3.Manifold.batch_boolean([piece, cut], m3.OpType.Subtract)
         v = piece.volume()
         if v > EPS_VOLUME:
@@ -344,4 +347,4 @@ def compute(solids: list[Solid], z0: float, z1: float, region: BaseGeometry | No
     excluded = _union(excluded_pieces).volume() if excluded_pieces else 0.0
     return Result(z0, z1, total, sum(v for _, _, v in pieces), by_category, by_material,
                   sorted(members.values(), key=lambda m: -m.volume), uncomputed, union,
-                  excluded, excluded_pieces)
+                  excluded, excluded_pieces, excluded_solids)

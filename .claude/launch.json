@@ -7,6 +7,12 @@
       "runtimeArgs": ["backend\\server.py"],
       "env": { "QTO_NO_BROWSER": "1", "QTO_PORT": "8766" },
       "port": 8766
+    },
+    {
+      "name": "single-html",
+      "runtimeExecutable": ".venv\\Scripts\\python.exe",
+      "runtimeArgs": ["-m", "http.server", "8766", "--bind", "127.0.0.1"],
+      "port": 8766
     }
   ]
 }

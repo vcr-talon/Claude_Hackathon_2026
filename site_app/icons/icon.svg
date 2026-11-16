@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 54 54">
+  <!-- KONTENT のアイコン（B1：梁つきの断面とコン天の線）。icon-192.png・icon-512.png はこれから作る。
+       ホーム画面では端末が角を丸めるので、地は四角いまま全面に塗る（maskable：中身は中心から半径 40% の内側） -->
+  <rect width="54" height="54" fill="#263238"/>
+  <path d="M9 22 H45 V29 H33 V44 H21 V29 H9 Z" fill="#B0BEC5"/>
+  <line x1="7" y1="22" x2="47" y2="22" stroke="#E8730C" stroke-width="2.5"/>
+  <path d="M23 9 L31 9 L27 17 Z" fill="#E8730C"/>
+</svg>

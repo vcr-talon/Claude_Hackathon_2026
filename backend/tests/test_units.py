@@ -22,6 +22,40 @@ def test_overlapping_zones_are_reported():
     assert r.union_total == pytest.approx(3.0, rel=REL)
 
 
+def test_overlaps_reported_when_excluding_registered():
+    """D34：「除く」がオンでも、高さと範囲が重なる区分の組と重なりの量を返す。数量は先の区分を優先する。"""
+    beam = box_solid((0, 0, 0), (4, 1, 1), key="beam")
+    units = [PourUnit("A", 0, 1, box(0, -1, 2, 2)), PourUnit("B", 0, 1, box(1, -1, 3, 2))]
+    r = compute_units([beam], units, exclude_registered=True)
+    assert [u.total for u in r.results] == pytest.approx([2.0, 1.0], rel=REL)
+    assert len(r.overlaps) == 1
+    o = r.overlaps[0]
+    assert (o.a, o.b) == (0, 1)
+    assert o.shared_volume == pytest.approx(1.0, rel=REL)
+    assert o.volume == pytest.approx(1.0, rel=REL)
+    assert [m.member_id for m in o.shared_members] == ["beam"]
+
+
+def test_overlap_reported_when_later_unit_is_fully_inside():
+    """後の区分が先の区分にすっぽり入り数量が 0 になっても、重なりは知らせる。"""
+    beam = box_solid((0, 0, 0), (4, 1, 1), key="beam")
+    units = [PourUnit("全体", 0, 1), PourUnit("一部", 0.2, 0.8, box(1, -1, 2, 2))]
+    r = compute_units([beam], units, exclude_registered=True)
+    assert r.results[1].total == pytest.approx(0.0, abs=1e-9)
+    assert len(r.overlaps) == 1
+    assert r.overlaps[0].shared_volume == pytest.approx(0.6, rel=REL)
+
+
+def test_touching_units_not_reported_when_excluding():
+    """接しているだけ（工区の境界・高さの境目）の区分は、オンでもオフでも重なりとして返さない。"""
+    beam = box_solid((0, 0, 0), (4, 1, 2), key="beam")
+    side = [PourUnit("A", 0, 2, box(0, -1, 2, 2)), PourUnit("B", 0, 2, box(2, -1, 4, 2))]
+    stack = [PourUnit("下", 0, 1), PourUnit("上", 1, 2)]
+    for units in (side, stack):
+        for on in (True, False):
+            assert compute_units([beam], units, exclude_registered=on).overlaps == []
+
+
 def test_touching_heights_do_not_overlap():
     col = box_solid((0, 0, 0), (1, 1, 2), key="col", category="柱")
     r = compute_units([col], [PourUnit("下", 0, 1), PourUnit("上", 1, 2)])
@@ -101,7 +135,7 @@ def test_earlier_unit_takes_priority_when_excluding():
              Unit("2F", [PourUnit("2F", 3, 6)])]
     r = compute_units(solids, units, exclude_registered=True)
     assert [u.total for u in r.results] == pytest.approx([12.8, 3.0], rel=REL)
-    assert r.overlaps == []
+    assert r.overlaps == []  # 部材を選んで先に入れたパラペットとの重なりは、設定ミスとして知らせない（D34）
     assert r.sum_total == pytest.approx(r.union_total, rel=REL)
     # 除外しなければパラペットが二重に入り、警告になる
     r = compute_units(solids, units)

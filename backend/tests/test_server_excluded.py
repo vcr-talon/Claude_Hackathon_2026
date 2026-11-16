@@ -12,7 +12,7 @@ from test_geometry import REL, box_solid
 
 def _split(solids, parts, z0, z1):
     r = compute(solids, z0, z1, exclude=make_excluder(parts))
-    out = server._excluded_by_part(SimpleNamespace(solids=solids), parts, r.excluded_pieces)
+    out = server._excluded_by_part(parts, r.excluded_pieces, r.excluded_solids)
     return r, {o["part"]: o["volume"] for o in out}
 
 
@@ -70,4 +70,4 @@ def test_selected_only_does_not_hide_other_members():
 
 
 def test_nothing_registered():
-    assert server._excluded_by_part(SimpleNamespace(solids=[]), [], []) == []
+    assert server._excluded_by_part([], [], []) == []

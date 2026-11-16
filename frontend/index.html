@@ -3,7 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>コンクリート数量算出</title>
+  <title>KONTENT</title>
+  <link rel="icon" href='data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 54 54"%3E%3Crect x="2" y="2" width="50" height="50" rx="10" fill="%23263238"/%3E%3Cpath d="M9 22 H45 V29 H33 V44 H21 V29 H9 Z" fill="%23B0BEC5"/%3E%3Cline x1="7" y1="22" x2="47" y2="22" stroke="%23E8730C" stroke-width="4"/%3E%3C/svg%3E'>
   <link rel="stylesheet" href="style.css">
   <script type="importmap">
     { "imports": { "three": "./vendor/three.module.js", "three/addons/": "./vendor/addons/" } }
@@ -12,7 +13,7 @@
 <body>
   <aside id="sidebar">
     <header>
-      <h1>コンクリート数量算出</h1>
+      <h1 class="brand"><svg class="logo" viewBox="0 0 54 54" width="26" height="26" aria-hidden="true"><rect x="2" y="2" width="50" height="50" rx="10" fill="#263238"/><path d="M9 22 H45 V29 H33 V44 H21 V29 H9 Z" fill="#B0BEC5"/><line x1="7" y1="22" x2="47" y2="22" stroke="#E8730C" stroke-width="2.5"/><path d="M23 9 L31 9 L27 17 Z" fill="#E8730C"/></svg>KONTENT</h1>
       <div id="modelInfo" class="muted">読込中…</div>
       <div class="filebtns">
         <label class="filebtn">IFCを開く<input type="file" id="fileInput" accept=".ifc"></label>
@@ -141,7 +142,6 @@
       <ul id="unitList" class="list units"></ul>
       <div id="unitSummary"></div>
       <button id="exportCsv" class="filebtn hidden" title="打設リストと部材明細の2つの表（Excelで開けます）を保存します">表に書き出す（Excel用）</button>
-      <label class="row"><input type="checkbox" id="excludeRegistered" checked> すでにリストに入れた部分は数量から除く（二重に数えないため。外すと全量）</label>
     </div>
   </aside>
 

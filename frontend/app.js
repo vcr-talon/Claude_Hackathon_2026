@@ -1,4 +1,4 @@
-// コンクリート数量算出 画面
+// KONTENT（コンクリート数量算出）画面
 // 平面図と3D表示は同じThree.jsのシーンを使い、カメラだけを切り替える（要件 D19・D27）。
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
@@ -37,7 +37,6 @@ const state = {
   result: null,
   units: [], // 打設区分 {name, parts: [{z0, z1, rangeText, label, polygons, categories, member_ids}]}
   unitResult: null,
-  excludeRegistered: true, // 登録済みの区分と重なる部分を差し引く（先に登録した区分が優先）
   hiddenKeys: new Set(), // 高さ範囲内がすべて登録済みの立体（表示しない）
   slabSee: true, // 平面表示でスラブを透かす
   zoneNames: {}, // 工区の表示名 {A: '1工区', ...}。内部のキーはA〜Fのまま
@@ -811,6 +810,7 @@ async function exportRemainCsv() {
 // タブレット用データ：全スパンの「上端からの深さ→体積」の表を計算サーバーで作り、1つのJSONに保存する
 // （docs/site_app_spec.md）。スパンを分けて送り、進捗を出す
 const SITE_BATCH = 10;
+// いま画面で選んでいる条件で書き出す
 async function exportSite() {
   if (!cells.length) { toast('通り芯からスパンを作れないため書き出せません', 'error'); return; }
   const r = state.result;
@@ -820,18 +820,58 @@ async function exportSite() {
   const conditions = [`高さ範囲：${$('rangeText').textContent}`];
   if (state.categories.size !== state.meta.categories.length) conditions.push(`数える部材：${[...state.categories].join('・')}`);
   conditions.push(`数える材料：${[...state.materials].join('・')}`);
-  const base = {
-    z0: state.z0, z1: state.z1, categories: [...state.categories], materials: [...state.materials], step: 0.05,
+  await sendSite({
+    z0: state.z0, z1: state.z1, categories: [...state.categories], materials: [...state.materials],
     zones: zones.length ? zones : null,
     title: zones.length ? `${range} ${zonesText(zones.map((z) => z.key).sort())}` : range, conditions,
-    truck_m3: Number($('truckM3').value) || 4.25, extra_pct: Number($('extraPct').value) || 0,
     boundaries: zones.length ? state.boundaries.map((b) => b.points) : [],
-  };
-  const missing = (r?.zones ?? []).reduce((a, z) => a + z.uncomputed.length, 0);
-  if (missing) toast(`未計算 ${missing} 件は含まれません`, 'error');
+  }, siteFileName(range, zones.length ? zonesText(zones.map((z) => z.key).sort()) : ''),
+  (r?.zones ?? []).reduce((a, z) => a + z.uncomputed.length, 0));
+}
+
+// 打設リストの区分をタブレット用に書き出せるか（D35）。書き出せないときは理由を返す
+// 条件がすべて同じ高さ範囲・同じ絞り込み（部材の種類・材料）で、部材の選択を使っていないこと。工区はばらばらでよい
+function unitSiteBlock(u) {
+  const p0 = u.parts[0], key = (p) => JSON.stringify([p.z0, p.z1, p.categories, p.materials]);
+  if (u.parts.some((p) => p.member_ids)) return '部材を選んだ条件を含む区分は書き出せません。区分を分けてください';
+  if (u.parts.some((p) => key(p) !== key(p0))) return '高さや絞り込みの違う条件を含む区分は書き出せません。区分を分けてください';
+  return null;
+}
+
+// 打設リストの区分 i を書き出す。「除く」がオンなら、それより前の区分と重なる部分を除く（打設リストの数量とそろえる）
+async function exportUnitSite(i) {
+  if (!cells.length) { toast('通り芯からスパンを作れないため書き出せません', 'error'); return; }
+  const u = state.units[i], block = unitSiteBlock(u);
+  if (block) { toast(block, 'error'); return; }
+  const p0 = u.parts[0];
+  const whole = u.parts.some((p) => !p.polygons); // 「フロア全体」の条件があれば工区で切らない
+  const zones = whole ? [] : u.parts.map((p) => ({ key: p.label, name: zoneName(p.label), polygons: p.polygons }));
+  const conditions = [`高さ範囲：${p0.rangeText}`, `工区：${u.parts.map((p) => partFields(p).zone).join('・')}`];
+  if (p0.categories) conditions.push(`数える部材：${p0.categories.join('・')}`);
+  conditions.push(`数える材料：${(p0.materials ?? defaultMaterials()).join('・')}`);
+  const exclude = state.units.slice(0, i).flatMap((v) => v.parts.map(partJson));
+  const shared = warnOverlaps(state.unitResult).filter((o) => Math.max(o.a, o.b) === i)
+    .reduce((a, o) => a + o.shared_volume, 0);
+  const note = shared > 0 ? `先に入れた区分と重なる ${fmt(shared, 3)} m³ を除いて書き出します。重なりは設定ミスの可能性があります` : '';
+  await sendSite({
+    z0: p0.z0, z1: p0.z1, categories: p0.categories, materials: p0.materials,
+    zones: zones.length ? zones : null, title: u.name, conditions,
+    // 平面図に区分の工区の外形を赤線で描く
+    boundaries: zones.flatMap((z) => z.polygons.map((rings) => rings[0])),
+    exclude_parts: exclude,
+  }, siteFileName(u.name, ''), state.unitResult?.units[i]?.uncomputed_count ?? 0, note);
+}
+
+// タブレット用データ：全スパンの「上端からの深さ→体積」の表を計算サーバーで作り、1つのJSONに保存する
+// （docs/site_app_spec.md）。スパンを分けて送り、進捗を出す
+// note：書き出す前に知らせること（重なりの注意など）。初めと書き出したあとのトーストに出す（途中の進捗で消えないように）
+async function sendSite(cond, name, missing, note = '') {
+  const base = { ...cond, step: 0.05, truck_m3: Number($('truckM3').value) || 4.25, extra_pct: Number($('extraPct').value) || 0 };
+  const warn = [note, missing ? `未計算 ${missing} 件は含まれません` : ''].filter(Boolean).join('。');
+  if (warn) toast(warn, 'error');
   let data = null;
   for (let i = 0; i < cells.length; i += SITE_BATCH) {
-    if (!missing || i) toast(`スパン ${i} / ${cells.length} を計算しています…`, 'info');
+    if (!warn || i) toast(`スパン ${i} / ${cells.length} を計算しています…`, 'info');
     const res = await fetch('/api/export_site', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ...base, header: i === 0,
@@ -845,9 +885,9 @@ async function exportSite() {
   const sum = data.cells.reduce((a, c) => a + c.from_top.at(-1) + c.slab, 0);
   data.overlap_note = data.total - sum; // 全スパンを合わせてから差を記録
   data.uncomputed = [...new Map(data.uncomputed.map((u) => [`${u.name}|${u.category}|${u.reason}`, u])).values()];
-  const name = siteFileName(range, zones.length ? zonesText(zones.map((z) => z.key).sort()) : '');
   download(name, new Blob([JSON.stringify(data)], { type: 'application/json' }));
-  toast(`タブレット用に、スパン ${data.cells.length} 件・合計 ${fmt(sum)} m³ を書き出しました${missing ? `（未計算 ${missing} 件は含まれません）` : ''}`, 'ok');
+  toast(`タブレット用に、スパン ${data.cells.length} 件・合計 ${fmt(sum)} m³ を書き出しました${missing ? `（未計算 ${missing} 件は含まれません）` : ''}` +
+    (note ? `。${note.replace('書き出します', '書き出しました')}` : ''), note ? 'error' : 'ok');
   showHandoff(name);
 }
 
@@ -1499,7 +1539,7 @@ async function runCompute() {
     categories: [...state.categories],
     member_ids: bySelection() ? [...state.selected] : null,
     materials: [...state.materials],
-    exclude_parts: state.excludeRegistered ? allParts() : [],
+    exclude_parts: allParts(),
   };
   const partColors = allPartColors();
   const res = await fetch('/api/compute', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
@@ -1669,6 +1709,7 @@ function registerUnit(zi, target = null) {
     state.units.push({ name: unitName([part]), parts: [part], autoName: true });
   }
   state.flash = { index: target ?? state.units.length - 1, at: Date.now() };
+  state.checkOverlapOf = state.flash.index; // 計算が返ったら、既にある区分と重なっていないか知らせる（D34）
   onUnitsChanged();
 }
 
@@ -1696,8 +1737,7 @@ function onUnitsChanged() {
   state.unitResult = null;
   renderUnits();
   runUnits();
-  if (state.excludeRegistered) scheduleCompute(); // 登録した部分を今の計算から差し引く
-  else if (state.result) renderResults(); // 「既存の区分に追加」の選択肢を更新
+  scheduleCompute(); // 登録した部分を今の計算から差し引く
 }
 
 // 条件の表示用の各項目（画面の行とCSVで共通）
@@ -1717,7 +1757,7 @@ async function runUnits() {
   if (!state.units.length) { state.unitResult = null; renderUnits(); return; }
   const body = {
     units: state.units.map((u) => ({ name: u.name, parts: u.parts.map(partJson) })),
-    exclude_registered: state.excludeRegistered,
+    exclude_registered: true, // 先に入れた区分を優先し、重なりを二重に数えない（D36：常にオン）
   };
   const res = await fetch('/api/units', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
   if (seq !== unitSeq) return;
@@ -1729,7 +1769,23 @@ async function runUnits() {
   }
   state.unitResult = await res.json();
   renderUnits();
+  // 追加した区分が既にある区分と重なっていれば、トーストでも知らせる
+  const added = state.checkOverlapOf;
+  state.checkOverlapOf = null;
+  if (added != null) {
+    const hits = warnOverlaps(state.unitResult).filter((o) => o.a === added || o.b === added);
+    if (hits.length) {
+      const names = hits.map((o) => `区分${(o.a === added ? o.b : o.a) + 1}`);
+      const others = names.slice(0, 3).join('・') + (names.length > 3 ? `ほか${names.length - 3}区分` : '');
+      toast(`⚠ 区分${added + 1}は${others}と高さと範囲が重なっています（${fmt(hits.reduce((s, o) => s + o.shared_volume, 0), 3)} m³）。` +
+        'レベルや境界線の設定を確認してください', 'error');
+    }
+  }
 }
+
+// 注意を出す重なり（D34）：同じ部材の同じ部分が2つの区分に入っている量が許容値（0.001 m³）を超える組。接しているだけの組は出さない
+const OVERLAP_WARN = 0.001;
+const warnOverlaps = (ur) => (ur?.overlaps ?? []).filter((o) => o.shared_volume > OVERLAP_WARN);
 
 // 区分が入る施工階：区分の条件の高さの下端（一番低いもの）にあるSLの階。SLより下なら一番下の階、階が無ければ「その他」
 function unitGroup(u) {
@@ -1748,7 +1804,7 @@ const openParts = new WeakSet();
 
 // 区分1行：色・名前・数量・削除。条件は「▶ 条件 n」で開く（増えても縦に伸びないように）
 function unitRow(i, ur, overlapping) {
-  const u = state.units[i], res = ur?.units[i], open = openParts.has(u);
+  const u = state.units[i], res = ur?.units[i], open = openParts.has(u), block = unitSiteBlock(u);
   const parts = open ? u.parts.map((p, k) => `<div class="part muted">${u.parts.length > 1 ? `${k + 1}. ` : ''}${esc(partText(p))}` +
     `${u.parts.length > 1 ? ` <button class="x" data-pdel="${i}:${k}" title="この条件を外す">×</button>` : ''}</div>`).join('') : '';
   // 追加した行を光らせる。再描画されても光り始めからの経過時間を引き継ぐ
@@ -1757,15 +1813,19 @@ function unitRow(i, ur, overlapping) {
   return `<li data-uidx="${i}" class="unit ${overlapping.has(i) ? 'overlap' : ''}${flash}"><div class="unitrow">` +
     `<span class="chip" style="background:${hex(unitColor(i))}"></span>` +
     `<input class="name" data-uname="${i}" value="${esc(u.name)}" title="区分名（変更できます）">` +
-    `<span class="num">${res ? `${fmt(res.total)} m³` : '計算中…'}</span><button data-udel="${i}">削除</button></div>` +
+    `<span class="num">${res ? `${fmt(res.total)} m³` : '計算中…'}</span>` +
+    `<button data-udel="${i}">削除</button></div>` +
     `<div class="muted sub"><button class="link" data-popen="${i}">${open ? '▼' : '▶'} 区分${i + 1}・条件 ${u.parts.length}</button>` +
-    `${res?.uncomputed_count ? `　<span class="warn">⚠ 未計算 ${res.uncomputed_count} 件</span>` : ''}</div>` +
+    `${overlapping.has(i) ? '　<span class="warn">⚠ ほかの区分と重なり</span>' : ''}` +
+    `${res?.uncomputed_count ? `　<span class="warn">⚠ 未計算 ${res.uncomputed_count} 件</span>` : ''}` +
+    // 区分名の欄を狭めないよう、2段目の右端に置く
+    `<button class="site${block ? ' off' : ''}" data-usite="${i}"${block ? ` aria-disabled="true" title="${esc(block)}"` : ' title="この区分だけをタブレット用に書き出します（打設当日に使います）"'}>タブレット用</button></div>` +
     `${parts}</li>`;
 }
 
 function renderUnits() {
   const ur = state.unitResult;
-  const overlapping = new Set((ur?.overlaps ?? []).filter((o) => o.members.length).flatMap((o) => [o.a, o.b]));
+  const overlapping = new Set(warnOverlaps(ur).flatMap((o) => [o.a, o.b]));
   $('unitHelp').classList.toggle('hidden', state.units.length > 0);
   $('exportCsv').classList.toggle('hidden', !state.units.length);
   // 施工階ごとに見出しでまとめる。いま選んでいる施工階は開き、ほかの階は閉じて小計だけ（見出しを押すと開閉）
@@ -1798,35 +1858,27 @@ function renderUnits() {
 
 function renderUnitSummary() {
   const ur = state.unitResult;
-  // 見出しの大きな数字：二重拾いのない合計（除外オンなら区分の合計と同じ）
+  // 見出しの大きな数字：二重拾いのない合計（先に入れた区分を優先して差し引くので、区分の合計と同じ）
   $('listTotal').innerHTML = !state.units.length ? '' : ur ? `${fmt(ur.union_total)} <small>m³</small>` : '<small>計算中…</small>';
   if (!ur || !state.units.length) { $('unitSummary').innerHTML = ''; return; }
   const unitName = (i) => `区分${i + 1}「${esc(state.units[i].name)}」`;
-  let html = ur.overlaps.length ? `<div class="unitsum">区分の単純合計<span class="num">${fmt(ur.sum_total)} m³</span></div>` : '';
-  // 同じ部材が2つの区分に入っている＝登録の誤りの可能性が高いので黄色で警告する
-  const shared = ur.overlaps.filter((o) => o.members.length);
-  // 別の部材どうしの食い込み（柱とスラブの取り合いなど）は、モデル上避けられないので注記にとどめる
-  const contact = ur.overlaps.filter((o) => o.volume - o.shared_volume > 0.0005);
+  let html = '';
+  // 高さと範囲が重なる区分＝レベルや境界線の設定ミスの可能性が高いので黄色で注意する（D34）
+  const shared = warnOverlaps(ur);
   if (shared.length) {
-    html += '<div class="overlapbox">⚠ 同じ部材が複数の区分に入っています。重なった部分は区分の合計で二重に数えています。';
+    html += '<div class="overlapbox">⚠ 高さと範囲が重なっている区分があります。レベルや境界線の設定を確認してください。' +
+      '<div class="muted">数量は二重に数えていません（重なった部分は先に入れた区分に数えています）</div>';
     for (const o of shared) {
-      html += `<div style="margin-top:6px"><b>${unitName(o.a)} と ${unitName(o.b)}</b>：${fmt(o.shared_volume)} m³</div>` +
+      html += `<div style="margin-top:6px"><button class="link overlappair" data-pair="${o.a}:${o.b}" title="押すと2つの区分を図に示します">` +
+        `<b>${unitName(o.a)} と ${unitName(o.b)}</b>（${fmt(o.shared_volume, 3)} m³）</button></div>` +
         `<details><summary>重なっている部材（${o.members.length}）</summary><table class="mini">` +
         o.members.slice(0, 100).map((m) => `<tr><td>${esc(m.category)}</td><td>${esc(m.name)}</td><td class="num">${fmt(m.volume, 3)}</td></tr>`).join('') +
         '</table></details>';
     }
     html += '</div>';
   }
-  if (contact.length) {
-    html += '<div class="muted" style="margin-top:6px">部材どうしの食い込み（柱とスラブの取り合いなど）を両方の区分で数えている部分：' +
-      contact.map((o) => `区分${o.a + 1}と${o.b + 1}で ${fmt(o.volume - o.shared_volume, 3)} m³`).join('、') + '</div>';
-  }
-  if (ur.overlaps.length) {
-    html += `<div class="unitsum" style="margin-top:6px">重複を除いた合計<span class="num">${fmt(ur.union_total)} m³</span></div>`;
-  } else if (state.excludeRegistered && state.units.length > 1) {
-    html += '<div class="muted" style="margin-top:4px">先に登録した区分を優先し、後の区分から重なりを差し引いています（二重拾いなし）</div>';
-  } else if (state.units.length > 1) {
-    html += '<div class="muted" style="margin-top:4px">区分どうしの重なりはありません</div>';
+  if (state.units.length > 1) {
+    html += '<div class="muted" style="margin-top:4px">先に入れた区分を優先し、後の区分から重なりを差し引いています（二重に数えません）</div>';
   }
   $('unitSummary').innerHTML = html;
 }
@@ -1836,13 +1888,18 @@ function renderUnitSummary() {
 const hoverGroup = new THREE.Group();
 scene.add(hoverGroup);
 let hoverUnit = null;
+// i は区分の番号、または番号の配列（重なっている2つの区分をまとめて示すとき）
 function showUnitOutline(i) {
-  if (i === hoverUnit) return;
-  hoverUnit = i;
+  const key = i === null ? null : String(i);
+  if (key === hoverUnit) return;
+  hoverUnit = key;
   hoverGroup.clear();
-  if (i === null || !state.units[i]) return;
+  if (i === null) return;
   const [b0, b1, b2, b3] = state.meta.bounds;
   const whole = [[[[b0, b1], [b2, b1], [b2, b3], [b0, b3], [b0, b1]]]]; // 工区なし＝モデル全体
+  for (const k of [i].flat()) if (state.units[k]) outlineUnit(k, whole);
+}
+function outlineUnit(i, whole) {
   for (const p of state.units[i].parts) {
     const color = ZONE_COLORS[p.label] ?? unitColor(i);
     for (const rings of p.polygons ?? whole) {
@@ -1871,7 +1928,7 @@ function savePlan() {
   if (!state.meta) return;
   const plan = {
     format: PLAN_FORMAT, version: 3, saved_at: new Date().toISOString(), source: state.meta.source,
-    excludeRegistered: state.excludeRegistered,
+    excludeRegistered: true, // 以前の版で開いても同じ数え方になるように残す
     range: Object.fromEntries(RANGE_IDS.map((id) => [id, $(id).value])),
     // いまの施工階の工区割（version 2 までと同じ場所）と、施工階ごとの工区割（version 3〜）
     boundaries: state.boundaries, seeds: state.seeds, zoneNames: state.zoneNames,
@@ -1914,7 +1971,7 @@ async function exportCsv() {
   const res = await fetch('/api/units', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ units: state.units.map((u) => ({ name: u.name, parts: u.parts.map(partJson) })),
-      exclude_registered: state.excludeRegistered, detail: true }),
+      exclude_registered: true, detail: true }),
   });
   if (!res.ok) { toast(`表を書き出せません：${await errorDetail(res)}`, 'error'); return; }
   const ur = await res.json();
@@ -1928,7 +1985,6 @@ async function exportCsv() {
     const r = ur.units[i];
     list.push([i + 1, u.name, join(u, 'range'), join(u, 'zone'), join(u, 'filters'), m3(r.total), r.member_count, r.uncomputed_count]);
   });
-  if (ur.overlaps.length) list.push(['区分の単純合計', '', '', '', '', m3(ur.sum_total), '', '']);
   list.push(['合計（重複を除く）', '', '', '', '', m3(ur.union_total), '', '']);
 
   const detail = [['区分', '区分名', '部材ID', '種別', '名称', '所属階', '材料', '体積（m3・区分内・重複控除前）', '備考']];
@@ -1981,8 +2037,6 @@ function applyPlan(plan) {
   // version 1 は区分が条件を1つだけ持つ形式
   state.units = plan.units.map((u) => (u.parts ? u : { name: u.name, parts: [{ ...u, name: undefined }] }));
   state.unitResult = null;
-  state.excludeRegistered = plan.excludeRegistered ?? true;
-  $('excludeRegistered').checked = state.excludeRegistered;
   $('selInfo').textContent = state.selected.size ? `${state.selected.size} 部材を選択中` : '';
   renderBoundaryList();
   renderUnits();
@@ -2168,6 +2222,10 @@ $('unitList').addEventListener('click', (ev) => {
     renderUnits();
     return;
   }
+  if (ev.target.dataset.usite !== undefined) {
+    exportUnitSite(Number(ev.target.dataset.usite)).catch((e) => toast(`タブレット用に書き出せません：${e.message}`, 'error'));
+    return;
+  }
   const { udel, pdel } = ev.target.dataset;
   if (udel !== undefined) {
     pushHistory();
@@ -2186,12 +2244,12 @@ $('unitList').addEventListener('mouseover', (ev) => {
   showUnitOutline(li ? Number(li.dataset.uidx) : null);
 });
 $('unitList').addEventListener('mouseleave', () => showUnitOutline(null));
-$('excludeRegistered').addEventListener('change', (ev) => {
-  state.excludeRegistered = ev.target.checked;
-  state.unitResult = null;
-  renderUnits();
-  runUnits();
-  scheduleCompute();
+// 重なりの注意の組を押すと、2つの区分を縁取る（もう一度押すと消す）
+$('unitSummary').addEventListener('click', (ev) => {
+  const b = ev.target.closest('[data-pair]');
+  if (!b) return;
+  const pair = b.dataset.pair.split(':').map(Number);
+  showUnitOutline(hoverUnit === String(pair) ? null : pair);
 });
 // 区分名の手入力は、入力欄に入ってから出るまでを1回の取り消し単位にする
 let nameBefore = null;

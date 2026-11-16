@@ -205,9 +205,14 @@ def _as_unit(u: Unit | PourUnit) -> Unit:
     return u if isinstance(u, Unit) else Unit(u.name, [u])
 
 
-def _shared(solids: list[Solid], a: Unit, b: Unit) -> tuple[float, list[MemberVolume]]:
-    """同じ部材が両方の区分に入っている部分。"""
-    commons = [c for p, q in product(a.parts, b.parts) if (c := intersect_units(p, q)) is not None]
+def _shared(solids: list[Solid], a: Unit, b: Unit, skip_selected: bool = False) -> tuple[float, list[MemberVolume]]:
+    """同じ部材が両方の区分に入っている部分。
+
+    skip_selected なら、先の区分 a の条件のうち部材を選んだもの（パラペットを先に打つ分など）は数えない。
+    「除く」がオンのとき、意図して先に入れた部材との重なりを設定ミスとして知らせないため（D34）。
+    """
+    commons = [c for p, q in product(a.parts, b.parts)
+               if not (skip_selected and p.member_ids is not None) and (c := intersect_units(p, q)) is not None]
     if not commons:
         return 0.0, []
     members: dict[str, MemberVolume] = {}
@@ -223,9 +228,28 @@ def _shared(solids: list[Solid], a: Unit, b: Unit) -> tuple[float, list[MemberVo
     return union_volume(solids, commons), sorted(members.values(), key=lambda m: -m.volume)
 
 
+def _may_overlap(a: Unit, b: Unit) -> bool:
+    """2つの区分の条件の箱（高さ範囲 × 平面の外接矩形）が体積を持って重なりうるか。重い体積計算の前の振り落とし。"""
+    for p, q in product(a.parts, b.parts):
+        if min(p.z1, q.z1) - max(p.z0, q.z0) <= 1e-9:
+            continue
+        if p.region is None or q.region is None:
+            return True
+        px0, py0, px1, py1 = p.region.bounds
+        qx0, qy0, qx1, qy1 = q.region.bounds
+        if min(px1, qx1) - max(px0, qx0) > 1e-9 and min(py1, qy1) - max(py0, qy0) > 1e-9:
+            return True
+    return False
+
+
 def compute_units(solids: list[Solid], units: list[Unit | PourUnit], exclude_registered: bool = False
                   ) -> UnitsResult:
-    """区分ごとの数量。exclude_registered なら先に登録した区分を優先して重なりを差し引く。"""
+    """区分ごとの数量。exclude_registered なら先に登録した区分を優先して重なりを差し引く。
+
+    重なり（D34）はどちらでも調べる。exclude_registered のときは区分の数量から先の区分が引かれているので、
+    「a ＋ b − 和集合」では求められない。2つの区分の条件の共通部分の体積（shared_volume）だけを返す。
+    このとき、先の区分の部材を選んだ条件（パラペットを先に打つ分など）との重なりは知らせない（利用者決定）。
+    """
     units = [_as_unit(u) for u in units]
     results = []
     for i, u in enumerate(units):
@@ -233,14 +257,21 @@ def compute_units(solids: list[Solid], units: list[Unit | PourUnit], exclude_reg
         results.append(_unit_total(solids, u.parts, earlier)[0])
 
     overlaps = []
-    if not exclude_registered:
-        for i, j in combinations(range(len(units)), 2):
-            if results[i].total <= EPS_VOLUME or results[j].total <= EPS_VOLUME:
-                continue
-            shared_volume, shared_members = _shared(solids, units[i], units[j])
-            volume = results[i].total + results[j].total - union_volume(solids, units[i].parts + units[j].parts)
-            if volume > 1e-6 or shared_members:
-                overlaps.append(Overlap(i, j, max(volume, shared_volume), shared_volume, shared_members))
+    for i, j in combinations(range(len(units)), 2):
+        if not _may_overlap(units[i], units[j]):
+            continue
+        if exclude_registered:
+            # 後の区分は先の区分との重なりが引かれて 0 になることがあるので、数量では振り落とさない
+            shared_volume, shared_members = _shared(solids, units[i], units[j], skip_selected=True)
+            if shared_members:
+                overlaps.append(Overlap(i, j, shared_volume, shared_volume, shared_members))
+            continue
+        if results[i].total <= EPS_VOLUME or results[j].total <= EPS_VOLUME:
+            continue
+        shared_volume, shared_members = _shared(solids, units[i], units[j])
+        volume = results[i].total + results[j].total - union_volume(solids, units[i].parts + units[j].parts)
+        if volume > 1e-6 or shared_members:
+            overlaps.append(Overlap(i, j, max(volume, shared_volume), shared_volume, shared_members))
     all_parts = [p for u in units for p in u.parts]
     union_total = union_volume(solids, all_parts) if len(all_parts) > 1 else sum(r.total for r in results)
     return UnitsResult(results, overlaps, union_total)

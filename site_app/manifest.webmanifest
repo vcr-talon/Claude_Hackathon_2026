@@ -1,6 +1,6 @@
 {
-  "name": "残量チェック（コンクリート打設）",
-  "short_name": "残量チェック",
+  "name": "KONTENT 残量チェック（コンクリート打設）",
+  "short_name": "KONTENT",
   "description": "打設当日に、残りのコンクリート数量と生コン車の台数を確かめるアプリ",
   "lang": "ja",
   "start_url": "./",

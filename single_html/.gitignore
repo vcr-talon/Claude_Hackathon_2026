@@ -1,0 +1,4 @@
+node_modules/
+dist/
+# ビルドのたびに作る（WASMをbase64にしたもの）
+src/wasm_data.js

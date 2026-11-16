@@ -1,0 +1,16 @@
+{
+  "name": "ifc-concrete-qto-single-html",
+  "private": true,
+  "type": "module",
+  "description": "PCアプリ（frontend/）と計算エンジンを1つのHTMLにまとめた版。Python・サーバー不要",
+  "scripts": {
+    "build": "node build.mjs",
+    "compare": "node tools/js_side.mjs",
+    "memory": "node --expose-gc tools/memory_check.mjs"
+  },
+  "dependencies": {
+    "esbuild": "0.28.2",
+    "manifold-3d": "3.5.5",
+    "web-ifc": "0.0.79"
+  }
+}

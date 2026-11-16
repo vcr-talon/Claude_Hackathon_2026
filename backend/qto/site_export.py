@@ -8,6 +8,7 @@ PCアプリの残量（V の d より上 ∪ S の体積）とそのまま一致
 """
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 
 import manifold3d as m3
@@ -136,12 +137,16 @@ def split_cells(cells: list[tuple[str, str, list]], zones: list[tuple[str, str, 
 
 def export_cell(solids: list[Solid], cell_id: str, label: str, ring: list[list[float]], z0: float, z1: float,
                 categories: set[str], materials: set[str] | None, step: float,
-                top: float | None = None) -> SiteCell:
-    """top：コン天（con_top の値）。打設済み高さの目安はここから測る。省くと範囲の上端"""
+                top: float | None = None, exclude: Callable[[Solid], m3.Manifold | None] | None = None) -> SiteCell:
+    """top：コン天（con_top の値）。打設済み高さの目安はここから測る。省くと範囲の上端。
+
+    exclude：先に打設リストに入れた区分と重なる部分を除く（/api/compute の exclude と同じ仕組み。D35）。
+    柱・梁・壁、スラブ、コン天より上に続く部材のすべてから除く。
+    """
     region = Polygon(ring).buffer(0)
     vertical = categories - {SLAB}
-    rv = compute(solids, z0, z1, region=region, categories=vertical, materials=materials) if vertical else None
-    rs = compute(solids, z0, z1, region=region, categories={SLAB}, materials=materials) if SLAB in categories else None
+    rv = compute(solids, z0, z1, region=region, categories=vertical, materials=materials, exclude=exclude) if vertical else None
+    rs = compute(solids, z0, z1, region=region, categories={SLAB}, materials=materials, exclude=exclude) if SLAB in categories else None
     v = rv.union if rv is not None else None
     s = rs.union if rs is not None else None
     if v is not None and s is not None:
@@ -153,7 +158,7 @@ def export_cell(solids: list[Solid], cell_id: str, label: str, ring: list[list[f
         # コン天より上に続く部材：上端がコン天より上にある立体（コン天ちょうどで終わる梁・柱は入れない）。
         # 柱は入れない：上の階までつながった柱（斜めの柱など）のスラブ厚の部分は、スラブと一緒に打つため
         risers = [x for x in solids if x.bbox[5] > top + RISE_EPS and x.category not in RISE_EXCLUDED]
-        rr = compute(risers, z0, z1, region=region, categories=vertical, materials=materials) if risers else None
+        rr = compute(risers, z0, z1, region=region, categories=vertical, materials=materials, exclude=exclude) if risers else None
         r = rr.union if rr is not None else None
         if r is not None and s is not None:
             r = m3.Manifold.batch_boolean([r, s], m3.OpType.Subtract)
